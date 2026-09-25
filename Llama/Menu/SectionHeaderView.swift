@@ -6,9 +6,17 @@ import AppKit
 final class SectionHeaderView: ItemView {
   private var linkUrl: URL?
   private let linkLabel = Theme.secondaryLabel()
+  private let onToggle: (() -> Void)?
 
-  init(title: String = "Installed", linkText: String? = nil, linkUrl: URL? = nil) {
+  init(
+    title: String = "Installed",
+    linkText: String? = nil,
+    linkUrl: URL? = nil,
+    expanded: Bool? = nil,
+    onToggle: (() -> Void)? = nil
+  ) {
     self.linkUrl = linkUrl
+    self.onToggle = onToggle
     super.init(frame: .zero)
 
     let titleLabel = Theme.secondaryLabel()
@@ -43,7 +51,21 @@ final class SectionHeaderView: ItemView {
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-    let rootStack = NSStackView(views: [titleRow, spacer])
+    var rootViews: [NSView] = [titleRow, spacer]
+
+    // Collapsible section: a trailing chevron marks the header as a toggle
+    // (down = collapsed/wound, up = expanded) and the whole row becomes clickable.
+    if let onToggle, let expanded {
+      let chevron = NSImageView()
+      Theme.configure(
+        chevron, symbol: expanded ? "chevron.up" : "chevron.down", color: .tertiaryLabelColor
+      )
+      Layout.constrainToIconSize(chevron)
+      rootViews.append(chevron)
+      addGesture(action: #selector(didToggle))
+    }
+
+    let rootStack = NSStackView(views: rootViews)
     rootStack.orientation = .horizontal
     rootStack.alignment = .centerY
     rootStack.spacing = 6
@@ -54,11 +76,15 @@ final class SectionHeaderView: ItemView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  override var highlightEnabled: Bool { false }
+  override var highlightEnabled: Bool { onToggle != nil }
 
   @objc private func openLink() {
     if let linkUrl {
       openInBrowser(linkUrl)
     }
+  }
+
+  @objc private func didToggle() {
+    onToggle?()
   }
 }

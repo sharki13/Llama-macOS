@@ -22,6 +22,10 @@ final class MenuController: NSObject, NSMenuDelegate {
   /// Reset on menu close so each open starts collapsed.
   private var isInstalledListExpanded = false
 
+  /// Whether the "Recommended for your Mac" section is expanded. Defaults to
+  /// collapsed (wound) and resets on menu close, so each open starts compact.
+  private var isDiscoverListExpanded = false
+
   /// Web catalog the Discover "Browse models" link points at — more models live
   /// here. Matches the empty-state browse link.
   ///
@@ -238,6 +242,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     // Reset navigation and section collapse state
     selectedModelId = nil
     isInstalledListExpanded = false
+    isDiscoverListExpanded = false
   }
 
   // MARK: - Menu Construction
@@ -715,10 +720,20 @@ final class MenuController: NSObject, NSMenuDelegate {
     menu.addItem(NSMenuItem.viewItem(with: SeparatorView()))
 
     // Self-describing header: a curated subset recommended for this Mac
-    // ("recommended" signals it's not the full compatible set, and the per-Mac
-    // framing explains why a family can appear at two sizes).
-    let header = SectionHeaderView(title: "Recommended for your Mac")
+    // ("recommended" signals it's not the full compatible set Collapsible and
+    // wound by default to keep the menu compact; the chevron toggles it open.
+    let header = SectionHeaderView(
+      title: "Recommended for your Mac",
+      expanded: isDiscoverListExpanded,
+      onToggle: { [weak self] in
+        guard let self else { return }
+        self.isDiscoverListExpanded.toggle()
+        self.rebuildMenuIfPossible()
+      }
+    )
     menu.addItem(NSMenuItem.viewItem(with: header))
+
+    guard isDiscoverListExpanded else { return }
 
     for suggestion in suggestions {
       let view = CatalogItemView(suggestion: suggestion) { [weak self] suggestion in
