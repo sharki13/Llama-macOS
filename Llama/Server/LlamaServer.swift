@@ -641,6 +641,10 @@ class LlamaServer {
     process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
     var environment = ProcessInfo.processInfo.environment
+    // Xcode may enable Metal API validation for the app. Its debug layer is
+    // inherited by router children and can abort otherwise working llama.cpp
+    // Metal kernels (notably Qwen3.8-Flash-Next at 128k context).
+    environment.removeValue(forKey: "MTL_DEBUG_LAYER")
     for (key, value) in spec.env { environment[key] = value }
     process.environment = environment
 
