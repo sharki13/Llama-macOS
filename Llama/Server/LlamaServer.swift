@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import os.log
 
 /// Essential errors that can occur during llama-server operations
@@ -159,7 +160,12 @@ class LlamaServer {
     didSet { NotificationCenter.default.post(name: .LBServerStateDidChange, object: self) }
   }
   var modelStatuses: [String: ModelLoadState] = [:] {
-    didSet { NotificationCenter.default.post(name: .LBModelStatusDidChange, object: self) }
+    didSet {
+      if let activeModelId {
+        GenerationStats.shared.noteModelSelection(activeModelId)
+      }
+      NotificationCenter.default.post(name: .LBModelStatusDidChange, object: self)
+    }
   }
   /// The ID of the currently active model, derived from `modelStatuses`.
   /// A model counts as active while it's loaded or in the process of loading.
@@ -198,11 +204,19 @@ class LlamaServer {
 
     setHandler(for: outputPipe) { message in
       self.logger.info("llama-server: \(message, privacy: .public)")
+      let lines = message.components(separatedBy: .newlines)
+      Task { @MainActor in
+        lines.forEach { GenerationStats.shared.consumeTimingLine($0) }
+      }
     }
 
     setHandler(for: errorPipe) { message in
       self.logger.error("llama-server error: \(message, privacy: .public)")
       self.notePresetRejection(in: message)
+      let lines = message.components(separatedBy: .newlines)
+      Task { @MainActor in
+        lines.forEach { GenerationStats.shared.consumeTimingLine($0) }
+      }
     }
   }
 
@@ -499,6 +513,38 @@ class LlamaServer {
     return blocker
   }
 
+  /// Reads the process's resident memory, matching Activity Monitor's "Real Mem".
+  nonisolated private static func residentMemory(pid: pid_t) -> UInt64? {
+    var usage = rusage_info_v4()
+    let result = withUnsafeMutablePointer(to: &usage) { pointer in
+      pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+        proc_pid_rusage(pid, Int32(RUSAGE_INFO_V4), $0)
+      }
+    }
+    return result == 0 ? usage.ri_resident_size : nil
+  }
+
+  /// Router Mode serves each loaded model from a child `llama serve` process.
+  /// Include the full descendant tree so the reading contains the large model
+  /// backend as well as the small router process.
+  nonisolated private static func processTreeResidentMemory(pid: pid_t) -> UInt64? {
+    let pids = [pid] + descendantProcessIDs(of: pid)
+    let readings = pids.compactMap { residentMemory(pid: $0) }
+    guard !readings.isEmpty else { return nil }
+    return readings.reduce(UInt64(0), +)
+  }
+
+  nonisolated private static func descendantProcessIDs(of pid: pid_t, depth: Int = 0) -> [pid_t] {
+    guard depth < 8 else { return [] }
+    var children = [pid_t](repeating: 0, count: 64)
+    let count = children.withUnsafeMutableBytes {
+      proc_listchildpids(pid, $0.baseAddress, Int32($0.count))
+    }
+    guard count > 0 else { return [] }
+    let directChildren = Array(children.prefix(min(children.count, Int(count))))
+    return directChildren.flatMap { [$0] + descendantProcessIDs(of: $0, depth: depth + 1) }
+  }
+
   /// Launches llama-server in Router Mode.
   ///
   /// The port-freeing pre-flight -- reaping any process we still track and
@@ -507,6 +553,7 @@ class LlamaServer {
   /// the main actor froze the UI (LLAMABARN-8M/8S), so we run it off the main
   /// actor and hop back to launch.
   func start() {
+    GenerationStats.shared.resetForServerRestart()
     // Fast, non-blocking teardown of the previous run, on the main actor.
     // Setting .idle first tells the outgoing process's termination handler this
     // is an intentional stop (so it won't flip us to an error state); clearing
@@ -635,6 +682,7 @@ class LlamaServer {
 
   /// Terminates the currently running llama-server process and resets state
   func stop() {
+    GenerationStats.shared.resetForServerRestart()
     // Set to .idle before terminating so the handler knows this is intentional
     state = .idle
 
@@ -763,6 +811,7 @@ class LlamaServer {
     if !isRunning && !isLoading {
       start()
     }
+    GenerationStats.shared.noteModelSelection(model.id)
 
     // Remember this as the user's last deliberately-run model, so the
     // global-input capture panel has a sticky target even when nothing is
@@ -809,8 +858,19 @@ class LlamaServer {
       // Poll /models to detect status.
       while !Task.isCancelled {
         await checkStatus()
+        updateProcessMemory()
         try? await Task.sleep(nanoseconds: 1_000_000_000)
       }
+    }
+  }
+
+  private func updateProcessMemory() {
+    guard let process = activeProcess, process.isRunning else {
+      GenerationStats.shared.clearServerResidentMemory()
+      return
+    }
+    if let bytes = Self.processTreeResidentMemory(pid: process.processIdentifier) {
+      GenerationStats.shared.updateServerResidentMemory(bytes: bytes)
     }
   }
 

@@ -208,6 +208,7 @@ enum SettingsTab: CaseIterable, Identifiable {
   case downloads
   case webUI
   case command
+  case stats
 
   var id: Self { self }
 
@@ -218,6 +219,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .downloads: "Downloads"
     case .webUI: "Web UI"
     case .command: "Command"
+    case .stats: "Stats"
     }
   }
 
@@ -228,6 +230,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .downloads: "arrow.down.circle"
     case .webUI: "macwindow"
     case .command: "terminal"
+    case .stats: "chart.bar.xaxis"
     }
   }
 
@@ -407,6 +410,95 @@ struct ServerCommandView: View {
   }
 }
 
+/// Timing data for the most recently completed generation.
+struct GenerationStatsView: View {
+  @State private var stats = GenerationStats.shared
+
+  var body: some View {
+    Form {
+      Section("Last generation") {
+        if let latest = stats.latest {
+          if let model = latest.model {
+            LabeledContent("Model", value: model)
+          }
+          LabeledContent("Completed", value: latest.completedAt.formatted(date: .abbreviated, time: .shortened))
+          phaseRow("Prompt processing (PP)", phase: latest.prompt)
+          phaseRow("Token generation (TG)", phase: latest.generation)
+        } else {
+          Text("Stats will appear after the next generation.")
+            .foregroundStyle(.secondary)
+        }
+      }
+      Section("Last 100 generations") {
+        if let summary = stats.summary {
+          Text("Based on \(summary.count) generation\(summary.count == 1 ? "" : "s")")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+          summaryRow("Prompt processing (PP)", values: summary.prompt)
+          summaryRow("Token generation (TG)", values: summary.generation)
+        } else {
+          Text("The average, minimum, and maximum will appear after the next generation.")
+            .foregroundStyle(.secondary)
+        }
+      }
+      Section("Real Mem") {
+        if let memoryBytes = stats.serverResidentBytes {
+          LabeledContent("Server + backends", value: Self.memoryString(bytes: memoryBytes))
+          if let updatedAt = stats.residentMemoryUpdatedAt {
+            LabeledContent("Updated", value: updatedAt.formatted(date: .omitted, time: .standard))
+          }
+          Text("Combined resident memory of the router and its backend processes.")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Real Mem will appear when the server starts.")
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  private func phaseRow(_ title: String, phase: GenerationStats.Phase) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+      HStack(spacing: 14) {
+        stat("Speed", value: String(format: "%.2f tok/s", phase.tokensPerSecond))
+        stat("Tokens", value: "\(phase.tokens)")
+        stat("Time", value: String(format: "%.2f s", phase.milliseconds / 1000))
+      }
+      .font(.system(size: 11))
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private func stat(_ title: String, value: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(title)
+      Text(value).foregroundStyle(.primary).monospacedDigit()
+    }
+  }
+
+  private func summaryRow(_ title: String, values: GenerationStats.RangeSummary) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+      HStack(spacing: 14) {
+        stat("Average", value: String(format: "%.2f tok/s", values.average))
+        stat("Min", value: String(format: "%.2f tok/s", values.minimum))
+        stat("Max", value: String(format: "%.2f tok/s", values.maximum))
+      }
+      .font(.system(size: 11))
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private static func memoryString(bytes: UInt64) -> String {
+    ByteCountFormatter.string(
+      fromByteCount: Int64(clamping: bytes),
+      countStyle: .memory)
+  }
+}
+
 /// The detail pane -- the selected section's form.
 struct SettingsView: View {
   var tabSelection: SettingsTabSelection
@@ -436,6 +528,7 @@ struct SettingsView: View {
     case .downloads: downloadsForm
     case .webUI: webUIForm
     case .command: ServerCommandView()
+    case .stats: GenerationStatsView()
     }
   }
 
