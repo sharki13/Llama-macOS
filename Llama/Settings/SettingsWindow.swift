@@ -209,6 +209,7 @@ enum SettingsTab: CaseIterable, Identifiable {
   case webUI
   case command
   case stats
+  case backend
 
   var id: Self { self }
 
@@ -220,6 +221,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .webUI: "Web UI"
     case .command: "Command"
     case .stats: "Stats"
+    case .backend: "Backend"
     }
   }
 
@@ -231,6 +233,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .webUI: "macwindow"
     case .command: "terminal"
     case .stats: "chart.bar.xaxis"
+    case .backend: "cpu"
     }
   }
 
@@ -499,6 +502,91 @@ struct GenerationStatsView: View {
   }
 }
 
+/// Explains how llama.cpp's compute backend is selected for this installation.
+struct BackendInfoView: View {
+  private static let automaticChoice = "__automatic_llama_binary__"
+  @State private var selectedPath = UserSettings.llamaBinaryPath ?? automaticChoice
+  @State private var versions: [String: String] = [:]
+
+  private var installations: [LlamaBinaries.Installation] {
+    LlamaBinaries.availableInstallations()
+  }
+
+  private var activeInstallation: LlamaBinaries.Installation? {
+    if selectedPath != Self.automaticChoice,
+      let selected = installations.first(where: { $0.path == selectedPath })
+    {
+      return selected
+    }
+    return installations.first
+  }
+
+  var body: some View {
+    Form {
+      Section("llama binary") {
+        Picker("Use", selection: $selectedPath) {
+          Text("Automatic").tag(Self.automaticChoice)
+          ForEach(installations) { installation in
+            Text("\(originName(installation.origin)) · \(displayPath(installation.path))")
+              .tag(installation.path)
+          }
+        }
+        .onChange(of: selectedPath) { _, path in
+          UserSettings.llamaBinaryPath = path == Self.automaticChoice ? nil : path
+        }
+
+        if let active = activeInstallation {
+          LabeledContent("Selected source", value: originName(active.origin))
+          LabeledContent("Version", value: versions[active.path] ?? "Reading…")
+          Text(displayPath(active.path))
+            .font(.system(size: 11, design: .monospaced))
+            .textSelection(.enabled)
+            .foregroundStyle(.secondary)
+        } else {
+          Text("No llama binary was found in the supported locations.")
+            .foregroundStyle(.secondary)
+        }
+      }
+
+    }
+    .formStyle(.grouped)
+    .onAppear {
+      if selectedPath != Self.automaticChoice,
+        !installations.contains(where: { $0.path == selectedPath })
+      {
+        selectedPath = Self.automaticChoice
+        UserSettings.llamaBinaryPath = nil
+      }
+    }
+    .task(id: installations.map(\.path).joined(separator: "|")) {
+      let paths = installations.map(\.path)
+      let resolvedVersions = await Task.detached(priority: .utility) {
+        Dictionary(uniqueKeysWithValues: paths.map { path in
+          (path, LlamaBinaries.readVersionDescription(at: path) ?? "Unknown")
+        })
+      }.value
+      guard paths == installations.map(\.path) else { return }
+      versions = resolvedVersions
+    }
+  }
+
+  private func originName(_ origin: LlamaBinaries.Origin) -> String {
+    switch origin {
+    case .managed: "Managed by Llama"
+    case .unsloth: "Unsloth build"
+    case .local: "~/.local/bin"
+    case .brew: "Homebrew"
+    case .external: "External install"
+    }
+  }
+
+  private func displayPath(_ path: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    guard path == home || path.hasPrefix(home + "/") else { return path }
+    return "~" + path.dropFirst(home.count)
+  }
+}
+
 /// The detail pane -- the selected section's form.
 struct SettingsView: View {
   var tabSelection: SettingsTabSelection
@@ -529,6 +617,7 @@ struct SettingsView: View {
     case .webUI: webUIForm
     case .command: ServerCommandView()
     case .stats: GenerationStatsView()
+    case .backend: BackendInfoView()
     }
   }
 

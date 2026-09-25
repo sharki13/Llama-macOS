@@ -14,6 +14,7 @@ final class LlamaInstallManager {
   static let shared = LlamaInstallManager()
 
   private let logger = Logger(subsystem: Logging.subsystem, category: "LlamaInstallManager")
+  private var binarySelectionObserver: NSObjectProtocol?
 
   enum State: Equatable {
     /// Ready -- a usable binary is present (or we haven't needed to act).
@@ -44,6 +45,43 @@ final class LlamaInstallManager {
   /// the footer (a "· brew" / "· ext" marker) so a stale version (and a no-op
   /// "Check for Updates") is explained rather than mysterious.
   private(set) var currentOrigin: LlamaBinaries.Origin = .managed
+
+  init() {
+    binarySelectionObserver = NotificationCenter.default.addObserver(
+      forName: .LBLlamaBinaryDidChange, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        await self?.refreshSelectedBinaryInfo()
+      }
+    }
+  }
+
+  deinit {
+    if let binarySelectionObserver {
+      NotificationCenter.default.removeObserver(binarySelectionObserver)
+    }
+  }
+
+  /// Refreshes the version and origin shown in the menu after the user changes
+  /// the preferred executable. The selected binary is never modified here.
+  private func refreshSelectedBinaryInfo() async {
+    let found = await Task.detached {
+      LlamaBinaries.resolve().map {
+        (origin: $0.origin, version: LlamaBinaries.readVersion(at: $0.path))
+      }
+    }.value
+
+    guard let (origin, version) = found else { return }
+    currentOrigin = origin
+    currentVersion = version
+    if case .installing = state { return }
+    if origin != .managed, let version, version < LlamaBinaries.floorVersion {
+      state = .unmanagedTooOld(version: version)
+    } else {
+      state = .idle
+    }
+    NotificationCenter.default.post(name: .LBCLIInstallStateDidChange, object: self)
+  }
 
   /// Ensures a usable `llama` binary is present -- installing one if none is
   /// found -- then starts the server. Runs at launch and from the menu's setup
@@ -100,7 +138,7 @@ final class LlamaInstallManager {
       }
       return true
 
-    case .brew, .external:
+    case .unsloth, .local, .brew, .external:
       // Can't touch an unmanaged install; nudge if below the floor but keep
       // running (warn, not block).
       if let version, version < LlamaBinaries.floorVersion {

@@ -301,9 +301,9 @@ class LlamaServer {
     /// A reading-friendly rendering of the command: the env vars as plain
     /// `export` statements up top (each flush-left on its own line), a blank
     /// line, then the invocation -- the binary and subcommand on one line, with
-    /// each `--flag` (grouped with its value) hanging-indented below. Paths are
-    /// shown literally and shell-quoted where needed, so the block stays
-    /// paste-and-run correct and shows exactly what runs.
+    /// each `--flag` (grouped with its value) hanging-indented below. Home
+    /// directory paths use `~` for readability; it remains unquoted so the
+    /// shell expands it when the command is pasted.
     var displayCommand: String {
       // Group the app-managed arguments so a `--flag` carries its following
       // value(s) on one line; bare positional args (like `serve`) stand alone.
@@ -368,9 +368,12 @@ class LlamaServer {
     /// Minimal shell quoting: wraps a token in single quotes only if it
     /// contains characters that the shell would otherwise treat specially.
     private static func quote(_ s: String) -> String {
-      guard s.contains(where: { !$0.isLetter && !$0.isNumber && !"-_./=:".contains($0) })
-      else { return s }
-      return "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+      let home = FileManager.default.homeDirectoryForCurrentUser.path
+      let display = (s == home || s.hasPrefix(home + "/"))
+        ? "~" + s.dropFirst(home.count) : s
+      guard display.contains(where: { !$0.isLetter && !$0.isNumber && !"-_./=:~".contains($0) })
+      else { return display }
+      return "'" + display.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
   }
 
@@ -410,8 +413,6 @@ class LlamaServer {
     // chosen so the rendered command reads well: the two path flags grouped up
     // top, then the remaining value-taking flags, and the bare toggles last.
     var arguments = [
-      // `serve` is the `llama` subcommand that replaces the old `llama-server`.
-      "serve",
       // Path flags, grouped together.
       "--models-preset", presetsPath,
       "--log-file", Self.logFilePath,
@@ -420,6 +421,11 @@ class LlamaServer {
       "--models-max", "1",
       "--fit-target", String(Int(Model.fitTargetMb)),
     ]
+    // The unified binary uses `llama serve`; the legacy standalone executable
+    // is already the server and takes server flags directly.
+    if URL(fileURLWithPath: llamaPath).lastPathComponent != "llama-server" {
+      arguments.insert("serve", at: 0)
+    }
 
     // Bind to custom address if network exposure is enabled
     if let bindAddress = effectiveBindAddress {

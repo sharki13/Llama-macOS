@@ -17,6 +17,7 @@ extension Notification.Name {
   // Posted when the app-owned CLI install state changes (idle/installing/failed),
   // so the menu can surface a "setting up…" banner or a retry affordance.
   static let LBCLIInstallStateDidChange = Notification.Name("LBCLIInstallStateDidChange")
+  static let LBLlamaBinaryDidChange = Notification.Name("LBLlamaBinaryDidChange")
   // Posted when the global-input shortcut setting changes, so the controller
   // can re-register the hotkey without a relaunch.
   static let LBGlobalInputShortcutDidChange = Notification.Name("LBGlobalInputShortcutDidChange")

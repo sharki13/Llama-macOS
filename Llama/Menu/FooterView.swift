@@ -57,6 +57,8 @@ final class FooterView: ItemView {
     let marker: String
     switch llamaOrigin {
     case .managed: marker = ""
+    case .unsloth: marker = " · Unsloth"
+    case .local: marker = " · local"
     case .brew: marker = " · brew"
     case .external: marker = " · ext"
     }

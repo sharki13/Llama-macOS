@@ -61,6 +61,10 @@ enum MemProfileRunner {
       logger.error("llama binary not found")
       return nil
     }
+    guard URL(fileURLWithPath: llamaPath).lastPathComponent != "llama-server" else {
+      logger.info("Memory profiling requires the unified llama executable")
+      return nil
+    }
 
     let ctxLo: UInt32 = 4096
     let ctxHi: UInt32 = 131072

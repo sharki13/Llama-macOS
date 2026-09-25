@@ -51,6 +51,7 @@ enum UserSettings {
     static let modelLastUsedDates = "modelLastUsedDates"
     static let useFullWorkingSet = "useFullWorkingSet"
     static let globalInputShortcut = "globalInputShortcut"
+    static let llamaBinaryPath = "llamaBinaryPath"
   }
 
   private static let defaults = UserDefaults.standard
@@ -344,6 +345,21 @@ enum UserSettings {
   static var extraServerArgList: [String] {
     guard let raw = defaults.string(forKey: Keys.extraServerArgs) else { return [] }
     return raw.split(whereSeparator: \.isWhitespace).map(String.init)
+  }
+
+  /// Preferred llama executable path. Nil uses automatic discovery order.
+  static var llamaBinaryPath: String? {
+    get { defaults.string(forKey: Keys.llamaBinaryPath) }
+    set {
+      guard newValue != llamaBinaryPath else { return }
+      if let newValue {
+        defaults.set(newValue, forKey: Keys.llamaBinaryPath)
+      } else {
+        defaults.removeObject(forKey: Keys.llamaBinaryPath)
+      }
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+      NotificationCenter.default.post(name: .LBLlamaBinaryDidChange, object: nil)
+    }
   }
 
   // MARK: - Context Tier Preferences

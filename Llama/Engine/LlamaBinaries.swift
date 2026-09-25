@@ -10,9 +10,8 @@ import os.log
 /// - any other install (e.g. Homebrew) is left unmanaged: the app uses it
 ///   but never modifies it
 ///
-/// `llama` is the unified llama.cpp executable -- the server is `llama serve`
-/// and memory profiling is `llama fit-params`, both subcommands of this one
-/// binary. There is no separate `llama-server` / `llama-fit-params` to find.
+/// Supports both the unified `llama` executable and legacy standalone
+/// `llama-server` binaries.
 enum LlamaBinaries {
 
   private static let logger = Logger(subsystem: Logging.subsystem, category: "LlamaBinaries")
@@ -22,6 +21,14 @@ enum LlamaBinaries {
   /// `~/.local/bin/llama` symlink onto PATH, but the app points at the real file.
   static let managedPath: String =
     (NSHomeDirectory() as NSString).appendingPathComponent(".llama-app/llama")
+
+  /// Unsloth's local llama.cpp build directory.
+  static let unslothBinDir: String =
+    (NSHomeDirectory() as NSString).appendingPathComponent(".unsloth/llama.cpp/build/bin")
+
+  /// `install.sh` may expose the managed binary through this PATH symlink.
+  static let localBinPath: String =
+    (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/llama")
 
   /// Unmanaged locations to probe when the app hasn't installed its own binary.
   /// Covers the Homebrew bin dirs (Apple Silicon and Intel).
@@ -45,7 +52,13 @@ enum LlamaBinaries {
   /// update; `brew` and `external` are both used as-is and never modified.
   /// Brew is split out so the footer can hint at the actual update channel
   /// (`brew upgrade`) instead of a generic "external" marker.
-  enum Origin: Equatable { case managed, brew, external }
+  enum Origin: Equatable { case managed, unsloth, local, brew, external }
+
+  struct Installation: Identifiable, Equatable {
+    let path: String
+    let origin: Origin
+    var id: String { path }
+  }
 
   /// Whether the binary at `path` is a Homebrew install. Follows symlinks and
   /// checks for Homebrew's Cellar layout (`bin/llama` is a symlink into
@@ -55,14 +68,45 @@ enum LlamaBinaries {
     (path as NSString).resolvingSymlinksInPath.contains("/Cellar/")
   }
 
-  /// Resolves the active `llama` binary: the managed path wins, then the
-  /// unmanaged locations in order. Nil when none is found, which is what sends
-  /// the app down the install flow.
+  /// Resolves the preferred executable when available, or the first detected
+  /// installation in automatic priority order. Nil when none is found.
   static func resolve() -> (path: String, origin: Origin)? {
+    let installations = availableInstallations()
+    if let preferredPath = UserSettings.llamaBinaryPath,
+      let preferred = installations.first(where: { $0.path == preferredPath })
+    {
+      return (preferred.path, preferred.origin)
+    }
+    guard let first = installations.first else { return nil }
+    return (first.path, first.origin)
+  }
+
+  /// Detected installations in automatic-selection priority order.
+  static func availableInstallations() -> [Installation] {
     let fm = FileManager.default
+    var installations: [Installation] = []
 
     if fm.isExecutableFile(atPath: managedPath) {
-      return (managedPath, .managed)
+      installations.append(Installation(path: managedPath, origin: .managed))
+    }
+
+    // Prefer the unified executable when both are present: it supports server
+    // mode and the `fit-params` command used for memory profiling.
+    for name in ["llama", "llama-server"] {
+      let path = (unslothBinDir as NSString).appendingPathComponent(name)
+      if fm.isExecutableFile(atPath: path) {
+        installations.append(Installation(path: path, origin: .unsloth))
+      }
+    }
+
+    if fm.isExecutableFile(atPath: localBinPath) {
+      // If this is install.sh's standard symlink to our managed executable,
+      // the canonical managed entry above is enough and avoids duplicate UI.
+      let resolvedLocalPath = (localBinPath as NSString).resolvingSymlinksInPath
+      let resolvedManagedPath = (managedPath as NSString).resolvingSymlinksInPath
+      if resolvedLocalPath != resolvedManagedPath {
+        installations.append(Installation(path: localBinPath, origin: .local))
+      }
     }
 
     #if DEBUG
@@ -72,18 +116,19 @@ enum LlamaBinaries {
       //   defaults write app.llama.Llama.dev ignoreUnmanagedLlama -bool YES
       if UserDefaults.standard.bool(forKey: "ignoreUnmanagedLlama") {
         logger.debug("ignoreUnmanagedLlama set; ignoring unmanaged installs")
-        return nil
+        return installations
       }
     #endif
 
     for dir in unmanagedDirs {
       let path = dir + "/llama"
       if fm.isExecutableFile(atPath: path) {
-        return (path, isHomebrew(at: path) ? .brew : .external)
+        installations.append(
+          Installation(path: path, origin: isHomebrew(at: path) ? .brew : .external))
       }
     }
 
-    return nil
+    return installations
   }
 
   /// The path to the `llama` binary to invoke, or `nil` if none is installed.
@@ -101,12 +146,32 @@ enum LlamaBinaries {
   /// the build and exits -- no model load. Blocks on the subprocess, so call off
   /// the main thread.
   static func readVersion(at path: String) -> LlamaVersion? {
+    guard let output = readVersionOutput(at: path) else { return nil }
+    return LlamaVersion(parsing: output)
+  }
+
+  /// Returns the version line printed by the binary for display in Settings.
+  /// This preserves the binary's own version format, which may differ from the
+  /// `bNNNN` format used by the install manager for release comparisons.
+  static func readVersionDescription(at path: String) -> String? {
+    guard let output = readVersionOutput(at: path) else { return nil }
+    let lines = output.split(whereSeparator: \.isNewline)
+    let versionLine = lines.first { $0.localizedCaseInsensitiveContains("version:") }
+    guard let line = (versionLine ?? lines.first)?.trimmingCharacters(in: .whitespaces) else {
+      return nil
+    }
+    guard line.lowercased().hasPrefix("version:") else { return line }
+    return line.dropFirst("version:".count).trimmingCharacters(in: .whitespaces)
+  }
+
+  private static func readVersionOutput(at path: String) -> String? {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: path)
-    proc.arguments = ["version"]
+    proc.arguments = URL(fileURLWithPath: path).lastPathComponent == "llama-server"
+      ? ["--version"] : ["version"]
     let out = Pipe()
     proc.standardOutput = out
-    proc.standardError = Pipe()  // discard any chatter
+    proc.standardError = out  // capture startup chatter too; version may follow it
 
     do {
       try proc.run()
@@ -119,6 +184,6 @@ enum LlamaBinaries {
     let data = out.fileHandleForReading.readDataToEndOfFile()
     proc.waitUntilExit()
     guard proc.terminationStatus == 0 else { return nil }
-    return LlamaVersion(parsing: String(decoding: data, as: UTF8.self))
+    return String(decoding: data, as: UTF8.self)
   }
 }
