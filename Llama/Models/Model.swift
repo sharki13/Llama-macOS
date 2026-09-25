@@ -13,7 +13,7 @@ struct Model: Identifiable, Codable {
   /// Maximum context length in tokens. 128k upper bound — clamped by the
   /// memory budget once `ctxBytesPer1kTokens` is measured.
   let ctxWindow: Int
-  /// Total bytes on disk for the model (main + shards + mmproj).
+  /// Total bytes on disk for the model (main + shards + mmproj + MTP sidecar).
   let fileSize: Int64
   /// Estimated KV-cache footprint for a 1k-token context, in bytes.
   /// 0 = MemProfile probe is pending; -1 = probe failed; >0 = measured.
@@ -139,7 +139,7 @@ struct Model: Identifiable, Codable {
     mtpUrl != nil || hasMTPHead
   }
 
-  /// All remote URLs this model needs to download (main + shards + mmproj).
+  /// All remote URLs this model needs to download (main + shards + sidecars).
   var allDownloadUrls: [URL] {
     var urls = [downloadUrl]
     if let additional = additionalParts {

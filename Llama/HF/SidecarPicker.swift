@@ -58,9 +58,12 @@ enum SidecarPicker {
 
   /// Picks the MTP draft head for `mainPath`. `tag` is the main file's canonical
   /// quant tag, which lets an exact `-<TAG>.gguf` head win over a merely
-  /// near-in-bits one.
+  /// near-in-bits one. Also supports repositories that keep MTP files under a
+  /// top-level `MTP/` directory separate from the main model's quant directory.
   static func mtp(among names: [String], mainPath: String, tag: String?) -> String? {
-    bestSibling(among: names, mainPath: mainPath, tag: tag, isCandidate: isMtp)
+    bestSibling(
+      among: names, mainPath: mainPath, tag: tag,
+      allowGlobalMtpDirectory: true, isCandidate: isMtp)
   }
 
   /// Port of llama.cpp's `find_best_sibling` (`common/download.cpp`), the
@@ -89,6 +92,7 @@ enum SidecarPicker {
     among names: [String],
     mainPath: String,
     tag: String? = nil,
+    allowGlobalMtpDirectory: Bool = false,
     isCandidate: (String) -> Bool
   ) -> String? {
     let mainDirs = dirComponents(of: mainPath)
@@ -100,9 +104,15 @@ enum SidecarPicker {
 
     for path in names.sorted() where isCandidate(path) {
       let dirs = dirComponents(of: path)
-      guard dirs.count <= mainDirs.count, mainDirs.starts(with: dirs) else { continue }
+      let isGlobalMtp = allowGlobalMtpDirectory
+        && dirs.count == 1
+        && String(dirs[0]).caseInsensitiveCompare("MTP") == .orderedSame
+      guard isGlobalMtp || (dirs.count <= mainDirs.count && mainDirs.starts(with: dirs))
+      else { continue }
 
-      let depth = dirs.count
+      // Treat MTP/ as a repo-root sidecar folder for ranking, so a draft head
+      // beside the selected quant is preferred when both forms are available.
+      let depth = isGlobalMtp ? 0 : dirs.count
       let diff = abs(GGUFQuant.quantBits(forPath: path) - mainBits)
       let exact = tagUpper.map { path.uppercased().contains("-\($0).") } ?? false
 

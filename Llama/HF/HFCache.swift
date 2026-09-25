@@ -545,9 +545,12 @@ enum HFCache {
     // silently fails even though the sidecar is on disk.
     let mmprojFile = SidecarPicker.mmproj(among: siblings, mainPath: filename)
       .map { snapshotDir.appendingPathComponent($0).path }
+    // Some repos (including Unsloth) keep quant-matched MTP heads in a
+    // top-level MTP/ folder rather than beside the main quant directory.
+    let mtpSidecar = SidecarPicker.mtp(among: siblings, mainPath: filename, tag: quant)
+      .map { snapshotDir.appendingPathComponent($0).path }
 
-    // Calculate file size (sum all shards if split, plus the mmproj sidecar so
-    // it matches `Model.fileSize`'s contract: main + shards + mmproj).
+    // Calculate total size, following cache symlinks to the actual blobs.
     var filePaths: [String]
     if let shardFiles {
       filePaths = shardFiles.map { snapshotDir.appendingPathComponent($0).path }
@@ -556,6 +559,9 @@ enum HFCache {
     }
     if let mmprojFile {
       filePaths.append(mmprojFile)
+    }
+    if let mtpSidecar {
+      filePaths.append(mtpSidecar)
     }
 
     // Resolve symlinks before reading attributes — HF cache stores symlinks in
@@ -592,11 +598,6 @@ enum HFCache {
     }
 
     let mainFilePath = snapshotDir.appendingPathComponent(filename).path
-
-    // A sidecar MTP head (`mtp-….gguf`) shipped beside the main weights, if any,
-    // quant-matched to the main. Present takes precedence over an embedded head.
-    let mtpSidecar = SidecarPicker.mtp(among: siblings, mainPath: filename, tag: quant)
-      .map { snapshotDir.appendingPathComponent($0).path }
 
     // Embedded-head detection reads the GGUF metadata (the ground truth --
     // unsloth's MTP builds carry no filename marker at all), falling back to
