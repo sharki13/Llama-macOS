@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import os.log
 
 /// Resolves the `llama` executable the app drives, and classifies whether the
@@ -52,12 +53,18 @@ enum LlamaBinaries {
   /// update; `brew` and `external` are both used as-is and never modified.
   /// Brew is split out so the footer can hint at the actual update channel
   /// (`brew upgrade`) instead of a generic "external" marker.
-  enum Origin: Equatable { case managed, unsloth, local, brew, external }
+  enum Origin: Equatable { case managed, unsloth, local, brew, external, custom }
 
   struct Installation: Identifiable, Equatable {
     let path: String
     let origin: Origin
     var id: String { path }
+    var isAvailable: Bool {
+      var isDirectory = ObjCBool(false)
+      return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+        && !isDirectory.boolValue
+        && FileManager.default.isExecutableFile(atPath: path)
+    }
   }
 
   /// Whether the binary at `path` is a Homebrew install. Follows symlinks and
@@ -73,11 +80,11 @@ enum LlamaBinaries {
   static func resolve() -> (path: String, origin: Origin)? {
     let installations = availableInstallations()
     if let preferredPath = UserSettings.llamaBinaryPath,
-      let preferred = installations.first(where: { $0.path == preferredPath })
+      let preferred = installations.first(where: { $0.path == preferredPath && $0.isAvailable })
     {
       return (preferred.path, preferred.origin)
     }
-    guard let first = installations.first else { return nil }
+    guard let first = installations.first(where: \.isAvailable) else { return nil }
     return (first.path, first.origin)
   }
 
@@ -116,7 +123,7 @@ enum LlamaBinaries {
       //   defaults write app.llama.Llama.dev ignoreUnmanagedLlama -bool YES
       if UserDefaults.standard.bool(forKey: "ignoreUnmanagedLlama") {
         logger.debug("ignoreUnmanagedLlama set; ignoring unmanaged installs")
-        return installations
+        return includingCustom(installations)
       }
     #endif
 
@@ -128,7 +135,15 @@ enum LlamaBinaries {
       }
     }
 
-    return installations
+    return includingCustom(installations)
+  }
+
+  private static func includingCustom(_ found: [Installation]) -> [Installation] {
+    var result = found
+    for path in UserSettings.customLlamaBinaryPaths where !result.contains(where: { $0.path == path }) {
+      result.append(Installation(path: path, origin: .custom))
+    }
+    return result
   }
 
   /// The path to the `llama` binary to invoke, or `nil` if none is installed.
@@ -172,6 +187,8 @@ enum LlamaBinaries {
     let out = Pipe()
     proc.standardOutput = out
     proc.standardError = out  // capture startup chatter too; version may follow it
+    let finished = DispatchSemaphore(value: 0)
+    proc.terminationHandler = { _ in finished.signal() }
 
     do {
       try proc.run()
@@ -179,6 +196,16 @@ enum LlamaBinaries {
       logger.error(
         "Couldn't run \(path, privacy: .public) version: \(error.localizedDescription, privacy: .public)"
       )
+      return nil
+    }
+    // A manually selected executable can be broken or hang in its version
+    // command. Never leave the Backend pane waiting indefinitely for it.
+    if finished.wait(timeout: .now() + 5) == .timedOut {
+      if proc.isRunning { kill(proc.processIdentifier, SIGTERM) }
+      if finished.wait(timeout: .now() + 1) == .timedOut && proc.isRunning {
+        kill(proc.processIdentifier, SIGKILL)
+      }
+      proc.waitUntilExit()
       return nil
     }
     let data = out.fileHandleForReading.readDataToEndOfFile()

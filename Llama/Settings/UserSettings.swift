@@ -55,6 +55,7 @@ enum UserSettings {
     static let useFullWorkingSet = "useFullWorkingSet"
     static let globalInputShortcut = "globalInputShortcut"
     static let llamaBinaryPath = "llamaBinaryPath"
+    static let customLlamaBinaryPaths = "customLlamaBinaryPaths"
   }
 
   private static let defaults = UserDefaults.standard
@@ -406,6 +407,27 @@ enum UserSettings {
       NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
       NotificationCenter.default.post(name: .LBLlamaBinaryDidChange, object: nil)
     }
+  }
+
+  /// User-selected executables outside the locations scanned automatically.
+  /// Keep unavailable paths so a removable volume or rebuilt binary can return
+  /// without making the user add it again.
+  static var customLlamaBinaryPaths: [String] {
+    defaults.stringArray(forKey: Keys.customLlamaBinaryPaths) ?? []
+  }
+
+  static func addCustomLlamaBinaryPath(_ path: String) {
+    var paths = customLlamaBinaryPaths
+    guard !paths.contains(path) else { return }
+    paths.append(path)
+    defaults.set(paths, forKey: Keys.customLlamaBinaryPaths)
+  }
+
+  static func removeCustomLlamaBinaryPath(_ path: String) {
+    let paths = customLlamaBinaryPaths
+    guard paths.contains(path) else { return }
+    defaults.set(paths.filter { $0 != path }, forKey: Keys.customLlamaBinaryPaths)
+    if llamaBinaryPath == path { llamaBinaryPath = nil }
   }
 
   // MARK: - Context Tier Preferences

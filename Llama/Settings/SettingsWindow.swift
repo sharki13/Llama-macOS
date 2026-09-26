@@ -523,19 +523,18 @@ struct GenerationStatsView: View {
 struct BackendInfoView: View {
   private static let automaticChoice = "__automatic_llama_binary__"
   @State private var selectedPath = UserSettings.llamaBinaryPath ?? automaticChoice
+  @State private var installations = LlamaBinaries.availableInstallations()
   @State private var versions: [String: String] = [:]
-
-  private var installations: [LlamaBinaries.Installation] {
-    LlamaBinaries.availableInstallations()
-  }
+  @State private var isCheckingBinary = false
+  @State private var addError: String?
 
   private var activeInstallation: LlamaBinaries.Installation? {
-    if selectedPath != Self.automaticChoice,
-      let selected = installations.first(where: { $0.path == selectedPath })
-    {
-      return selected
-    }
-    return installations.first
+    guard let resolved = LlamaBinaries.resolve() else { return nil }
+    return installations.first { $0.path == resolved.path }
+  }
+
+  private var selectedInstallation: LlamaBinaries.Installation? {
+    installations.first { $0.path == selectedPath }
   }
 
   var body: some View {
@@ -544,8 +543,10 @@ struct BackendInfoView: View {
         Picker("Use", selection: $selectedPath) {
           Text("Automatic").tag(Self.automaticChoice)
           ForEach(installations) { installation in
-            Text("\(originName(installation.origin)) · \(displayPath(installation.path))")
+            Text("\(originName(installation.origin)) · \(displayPath(installation.path))"
+              + (installation.isAvailable ? "" : " (missing)"))
               .tag(installation.path)
+              .disabled(!installation.isAvailable)
           }
         }
         .onChange(of: selectedPath) { _, path in
@@ -560,14 +561,58 @@ struct BackendInfoView: View {
             .textSelection(.enabled)
             .foregroundStyle(.secondary)
         } else {
-          Text("No llama binary was found in the supported locations.")
+          Text("No usable llama binary was found.")
             .foregroundStyle(.secondary)
+        }
+
+        if let selectedInstallation, !selectedInstallation.isAvailable {
+          Text("The selected binary is unavailable. The next server start will use an available fallback until it returns.")
+            .font(.system(size: 11))
+            .foregroundStyle(.orange)
+        }
+      }
+
+      Section("Custom binaries") {
+        ForEach(UserSettings.customLlamaBinaryPaths, id: \.self) { path in
+          HStack(spacing: 8) {
+            Image(systemName: "terminal")
+              .foregroundStyle(.secondary)
+            Text(displayPath(path))
+              .font(.system(size: 11, design: .monospaced))
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .help(path)
+            if installations.first(where: { $0.path == path })?.isAvailable != true {
+              Text("Missing")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+            }
+            Spacer()
+            Button {
+              removeBinary(path)
+            } label: {
+              Image(systemName: "minus.circle")
+            }
+            .help("Remove from the list")
+          }
+        }
+
+        HStack {
+          Button("Add binary…") { chooseBinary() }
+            .disabled(isCheckingBinary)
+          if isCheckingBinary {
+            ProgressView().controlSize(.small)
+            Text("Checking binary…")
+              .font(.system(size: 11))
+              .foregroundStyle(.secondary)
+          }
         }
       }
 
     }
     .formStyle(.grouped)
     .onAppear {
+      installations = LlamaBinaries.availableInstallations()
       if selectedPath != Self.automaticChoice,
         !installations.contains(where: { $0.path == selectedPath })
       {
@@ -575,16 +620,72 @@ struct BackendInfoView: View {
         UserSettings.llamaBinaryPath = nil
       }
     }
-    .task(id: installations.map(\.path).joined(separator: "|")) {
-      let paths = installations.map(\.path)
+    .task(id: installations.map { "\($0.path):\($0.isAvailable)" }.joined(separator: "|")) {
+      let paths = installations.filter(\.isAvailable).map(\.path)
       let resolvedVersions = await Task.detached(priority: .utility) {
         Dictionary(uniqueKeysWithValues: paths.map { path in
           (path, LlamaBinaries.readVersionDescription(at: path) ?? "Unknown")
         })
       }.value
-      guard paths == installations.map(\.path) else { return }
+      guard paths == installations.filter(\.isAvailable).map(\.path) else { return }
       versions = resolvedVersions
     }
+    .alert("Can't add binary", isPresented: Binding(
+      get: { addError != nil }, set: { if !$0 { addError = nil } }
+    )) {
+      Button("OK") { addError = nil }
+    } message: {
+      Text(addError ?? "")
+    }
+  }
+
+  private func chooseBinary() {
+    let selection = ModalPresentation.run { () -> URL? in
+      let panel = NSOpenPanel()
+      panel.canChooseFiles = true
+      panel.canChooseDirectories = false
+      panel.allowsMultipleSelection = false
+      panel.message = "Choose a llama or llama-server executable"
+      panel.prompt = "Add"
+      return panel.runModal() == .OK ? panel.url : nil
+    }
+    guard let selection else { return }
+    let path = selection.standardizedFileURL.path
+    let name = selection.lastPathComponent
+    guard name == "llama" || name == "llama-server" else {
+      addError = "Choose an executable named llama or llama-server."
+      return
+    }
+    var isDirectory = ObjCBool(false)
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+      !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: path) else {
+      addError = "The selected file is not executable."
+      return
+    }
+
+    isCheckingBinary = true
+    Task {
+      let version = await Task.detached(priority: .userInitiated) {
+        LlamaBinaries.readVersion(at: path)
+      }.value
+      isCheckingBinary = false
+      guard let version else {
+        addError = "The selected file did not report a readable llama.cpp version."
+        return
+      }
+      if !installations.contains(where: { $0.path == path }) {
+        UserSettings.addCustomLlamaBinaryPath(path)
+      }
+      installations = LlamaBinaries.availableInstallations()
+      versions[path] = version.raw
+      selectedPath = path
+    }
+  }
+
+  private func removeBinary(_ path: String) {
+    UserSettings.removeCustomLlamaBinaryPath(path)
+    installations = LlamaBinaries.availableInstallations()
+    if selectedPath == path { selectedPath = Self.automaticChoice }
   }
 
   private func originName(_ origin: LlamaBinaries.Origin) -> String {
@@ -594,6 +695,7 @@ struct BackendInfoView: View {
     case .local: "~/.local/bin"
     case .brew: "Homebrew"
     case .external: "External install"
+    case .custom: "Custom"
     }
   }
 

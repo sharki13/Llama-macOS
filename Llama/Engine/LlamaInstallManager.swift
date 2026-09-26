@@ -52,6 +52,12 @@ final class LlamaInstallManager {
     ) { [weak self] _ in
       Task { @MainActor [weak self] in
         await self?.refreshSelectedBinaryInfo()
+        // A user may add a custom binary after the initial install failed.
+        // The settings-change observer only reloads a server that has already
+        // started, so bring an idle server up with the newly selected binary.
+        if LlamaServer.shared.state == .idle, LlamaBinaries.resolve() != nil {
+          LlamaServer.shared.start()
+        }
       }
     }
   }
@@ -138,7 +144,7 @@ final class LlamaInstallManager {
       }
       return true
 
-    case .unsloth, .local, .brew, .external:
+    case .unsloth, .local, .brew, .external, .custom:
       // Can't touch an unmanaged install; nudge if below the floor but keep
       // running (warn, not block).
       if let version, version < LlamaBinaries.floorVersion {

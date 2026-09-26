@@ -56,6 +56,10 @@ curl http://localhost:9931/v1/chat/completions \
 
 See complete API reference in the llama.cpp server [docs](https://github.com/ggml-org/llama.cpp/tree/master/tools/server#api-endpoints).
 
+## Backend binaries
+
+Settings → Backend lists automatically detected llama.cpp installations. Use **Add binary…** to register an executable named `llama` or `llama-server` from another location. The app checks its version, selects it, and remembers the path across launches. You can switch back to Automatic or remove a custom path at any time. Custom binaries are not copied or updated by the app; if the selected file becomes unavailable, the app uses an available fallback until it returns.
+
 ## Custom model settings
 
 The app configures each model for your Mac and writes that config to `models.ini`, which it regenerates on every launch. To change a setting, or add one the app doesn't set, edit `~/.config/llama/models.user.ini` instead -- the app only reads that file, and merges it into the config it generates.

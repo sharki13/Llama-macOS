@@ -35,9 +35,12 @@ final class CLISetupView: ItemView {
 
     case .unmanagedTooOld(let version):
       let title = Theme.primaryLabel("Update llama.cpp")
+      let advice = LlamaInstallManager.shared.currentOrigin == .brew
+        ? "Update it with “brew upgrade llama.cpp”."
+        : "Update the selected binary and re-check."
       let description = wrappingLabel(
         "Your llama.cpp (\(version.tag)) is older than the recommended "
-          + "\(LlamaBinaries.floorVersion.tag). Update it with “brew upgrade llama.cpp”.")
+          + "\(LlamaBinaries.floorVersion.tag). \(advice)")
       views = [title, description, actionLink("Re-check")]
 
     case .idle:

@@ -61,6 +61,7 @@ final class FooterView: ItemView {
     case .local: marker = " · local"
     case .brew: marker = " · brew"
     case .external: marker = " · ext"
+    case .custom: marker = " · custom"
     }
     let llamaText = llamaVersion.map { " · llama.cpp \($0)\(marker)" } ?? " · llama.cpp"
     let llamaLabel = Theme.tertiaryLabel(llamaText)
