@@ -127,6 +127,10 @@ final class GenerationStats {
     residentMemoryUpdatedAt = Date()
   }
 
+  func resetPeakServerResidentMemory() {
+    peakServerResidentBytes = serverResidentBytes
+  }
+
   func setMemoryMonitoringEnabled(_ enabled: Bool) {
     isMemoryMonitoringEnabled = enabled
   }

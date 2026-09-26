@@ -209,8 +209,8 @@ enum SettingsTab: CaseIterable, Identifiable {
   case downloads
   case webUI
   case command
-  case stats
   case backend
+  case stats
 
   var id: Self { self }
 
@@ -222,7 +222,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .downloads: "Downloads"
     case .webUI: "Web UI"
     case .command: "Command"
-    case .stats: "Stats"
+    case .stats: "Logs"
     case .backend: "Backend"
     }
   }
@@ -397,34 +397,12 @@ struct ServerCommandView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
 
-      // The server's log sits next to the command that produces it. Opened in
-      // Console.app rather than an in-app viewer: Console already follows the
-      // file live and has search, so there's nothing to build or maintain.
-      Section {
-        SettingRow(
-          title: "Server log",
-          description: "Output from the current server session."
-        ) {
-          Button("Open") { openServerLog() }
-            .font(.callout)
-            .controlSize(.small)
-        }
-      }
+
     }
     .formStyle(.grouped)
   }
 
-  /// Opens the log in Console.app specifically -- the default app for `.log`
-  /// can be a text editor, which shows a snapshot that doesn't update. Falls
-  /// back to the default app if Console can't be found.
-  private func openServerLog() {
-    let log = URL(fileURLWithPath: LlamaServer.logFilePath)
-    if let console = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Console") {
-      NSWorkspace.shared.open([log], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
-    } else {
-      NSWorkspace.shared.open(log)
-    }
-  }
+
 
   /// The shell command that starts the server, built from the current
   /// settings. Sourced from `LlamaServer` so it stays in lockstep with what
@@ -440,7 +418,7 @@ struct GenerationStatsView: View {
 
   var body: some View {
     Form {
-      Section("Last generation") {
+      Group {
         if let latest = stats.latest {
           if let model = latest.model {
             LabeledContent("Model", value: model)
@@ -467,19 +445,47 @@ struct GenerationStatsView: View {
             .foregroundStyle(.secondary)
         }
       }
-      Section("Memory") {
+      Section {
         if let memoryBytes = stats.serverResidentBytes {
-          LabeledContent("Current") {
-            Text(Self.memoryString(bytes: memoryBytes))
-              .foregroundStyle(currentMemoryColor)
-              .help("System memory pressure: \(stats.systemMemoryPressureLevel?.title ?? "Unknown")")
+          HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Text("Current memory")
+                .foregroundStyle(.secondary)
+              Text(Self.memoryString(bytes: memoryBytes))
+                .foregroundStyle(currentMemoryColor)
+                .help("System memory pressure: \(stats.systemMemoryPressureLevel?.title ?? "Unknown")")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider().frame(minHeight: 14)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Text("Peak")
+                .foregroundStyle(.secondary)
+              Text(stats.peakServerResidentBytes.map(Self.memoryString(bytes:)) ?? "—")
+              Spacer(minLength: 8)
+              Button("Reset") { stats.resetPeakServerResidentMemory() }
+                .controlSize(.small)
+                .help("Reset peak memory to the current value")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
           }
-          LabeledContent(
-            "Peak",
-            value: stats.peakServerResidentBytes.map(Self.memoryString(bytes:)) ?? "—")
         } else {
           Text("Memory usage will appear when the server starts.")
             .foregroundStyle(.secondary)
+        }
+      }
+      // The server's log sits next to the command that produces it. Opened in
+      // Console.app rather than an in-app viewer: Console already follows the
+      // file live and has search, so there's nothing to build or maintain.
+      Section {
+        SettingRow(
+          title: "Server log",
+          description: "Output from the current server session."
+        ) {
+          Button("Open") { openServerLog() }
+            .font(.callout)
+            .controlSize(.small)
         }
       }
     }
@@ -497,6 +503,18 @@ struct GenerationStatsView: View {
     case .warning: .yellow
     case .critical: .red
     case nil: .secondary
+    }
+  }
+
+  /// Opens the log in Console.app specifically -- the default app for `.log`
+  /// can be a text editor, which shows a snapshot that doesn't update. Falls
+  /// back to the default app if Console can't be found.
+  private func openServerLog() {
+    let log = URL(fileURLWithPath: LlamaServer.logFilePath)
+    if let console = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Console") {
+      NSWorkspace.shared.open([log], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
+    } else {
+      NSWorkspace.shared.open(log)
     }
   }
 
