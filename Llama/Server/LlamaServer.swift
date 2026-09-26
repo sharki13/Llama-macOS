@@ -868,7 +868,9 @@ class LlamaServer {
       // Poll /models to detect status.
       while !Task.isCancelled {
         await checkStatus()
-        updateProcessMemory()
+        if GenerationStats.shared.isMemoryMonitoringEnabled {
+          updateProcessMemory()
+        }
         try? await Task.sleep(nanoseconds: 1_000_000_000)
       }
     }
