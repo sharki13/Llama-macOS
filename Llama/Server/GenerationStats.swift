@@ -1,4 +1,6 @@
 import Foundation
+import Darwin
+import Dispatch
 import Observation
 
 /// Most recently completed inference, collected from llama-server's timing log.
@@ -29,6 +31,20 @@ final class GenerationStats {
     var percent: Double { Double(accepted) / Double(generated) * 100 }
   }
 
+  enum MemoryPressureLevel {
+    case normal
+    case warning
+    case critical
+
+    var title: String {
+      switch self {
+      case .normal: "Normal"
+      case .warning: "Warning"
+      case .critical: "Critical"
+      }
+    }
+  }
+
   struct RangeSummary {
     let average: Double
     let minimum: Double
@@ -49,7 +65,9 @@ final class GenerationStats {
   private(set) var serverResidentBytes: UInt64?
   private(set) var peakServerResidentBytes: UInt64?
   private(set) var residentMemoryUpdatedAt: Date?
+  private(set) var systemMemoryPressureLevel: MemoryPressureLevel?
   private(set) var isMemoryMonitoringEnabled = false
+  @ObservationIgnored private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
   private var pendingPrompt: Phase?
   private var pendingModel: String?
   private var pendingSlotId: Int?
@@ -111,6 +129,45 @@ final class GenerationStats {
 
   func setMemoryMonitoringEnabled(_ enabled: Bool) {
     isMemoryMonitoringEnabled = enabled
+  }
+
+  func startSystemMemoryPressureMonitoring() {
+    guard memoryPressureSource == nil else { return }
+
+    // Dispatch reports changes only. Read the current kernel level after
+    // subscribing, so a transition during setup is still delivered.
+    let source = DispatchSource.makeMemoryPressureSource(eventMask: .all, queue: .main)
+    memoryPressureSource = source
+    source.setEventHandler { [weak self] in
+      MainActor.assumeIsolated {
+        guard let self, let event = self.memoryPressureSource?.data else { return }
+        if event.contains(.critical) {
+          self.systemMemoryPressureLevel = .critical
+        } else if event.contains(.warning) {
+          self.systemMemoryPressureLevel = .warning
+        } else if event.contains(.normal) {
+          self.systemMemoryPressureLevel = .normal
+        }
+      }
+    }
+    source.activate()
+    systemMemoryPressureLevel = Self.readSystemMemoryPressureLevel()
+  }
+
+  private static func readSystemMemoryPressureLevel() -> MemoryPressureLevel? {
+    // XNU exposes the same 1/2/4 flags as Dispatch. This sysctl is not part of
+    // the public SDK, so an unavailable or unfamiliar value stays unknown.
+    var level: Int32 = 0
+    var size = MemoryLayout<Int32>.size
+    guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0,
+      size == MemoryLayout<Int32>.size, level >= 0
+    else { return nil }
+    switch UInt(level) {
+    case DispatchSource.MemoryPressureEvent.normal.rawValue: return .normal
+    case DispatchSource.MemoryPressureEvent.warning.rawValue: return .warning
+    case DispatchSource.MemoryPressureEvent.critical.rawValue: return .critical
+    default: return nil
+    }
   }
 
   func clearServerResidentMemory() {

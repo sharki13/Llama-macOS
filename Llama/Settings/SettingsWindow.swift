@@ -469,7 +469,11 @@ struct GenerationStatsView: View {
       }
       Section("Memory") {
         if let memoryBytes = stats.serverResidentBytes {
-          LabeledContent("Current", value: Self.memoryString(bytes: memoryBytes))
+          LabeledContent("Current") {
+            Text(Self.memoryString(bytes: memoryBytes))
+              .foregroundStyle(currentMemoryColor)
+              .help("System memory pressure: \(stats.systemMemoryPressureLevel?.title ?? "Unknown")")
+          }
           LabeledContent(
             "Peak",
             value: stats.peakServerResidentBytes.map(Self.memoryString(bytes:)) ?? "—")
@@ -480,8 +484,20 @@ struct GenerationStatsView: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { stats.setMemoryMonitoringEnabled(true) }
+    .onAppear {
+      stats.startSystemMemoryPressureMonitoring()
+      stats.setMemoryMonitoringEnabled(true)
+    }
     .onDisappear { stats.setMemoryMonitoringEnabled(false) }
+  }
+
+  private var currentMemoryColor: Color {
+    switch stats.systemMemoryPressureLevel {
+    case .normal: .green
+    case .warning: .yellow
+    case .critical: .red
+    case nil: .secondary
+    }
   }
 
   /// "12.3k / 32k (38%)" for the last generation's context load. The used
