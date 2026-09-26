@@ -206,6 +206,7 @@ enum SettingsTab: CaseIterable, Identifiable {
   case general
   case network
   case tokens
+  case integrations
   case downloads
   case webUI
   case command
@@ -219,6 +220,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .general: "General"
     case .network: "Network"
     case .tokens: "Tokens"
+    case .integrations: "Integrations"
     case .downloads: "Downloads"
     case .webUI: "Web UI"
     case .command: "Command"
@@ -232,6 +234,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .general: "gearshape"
     case .network: "network"
     case .tokens: "key.horizontal"
+    case .integrations: "puzzlepiece.extension"
     case .downloads: "arrow.down.circle"
     case .webUI: "macwindow"
     case .command: "terminal"
@@ -790,6 +793,7 @@ struct SettingsView: View {
     case .general: generalForm
     case .network: networkForm
     case .tokens: TokensSettingsView()
+    case .integrations: IntegrationsSettingsView()
     case .downloads: downloadsForm
     case .webUI: webUIForm
     case .command: ServerCommandView()

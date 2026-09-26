@@ -475,12 +475,18 @@ class ModelManager: NSObject, URLSessionDataDelegate {
   }
 
   private func generateModelsFileContent() -> String {
+    return UserModelOverrides.generatedFileHeader
+      + effectiveModelSections().map { $0.serialized() }.joined()
+  }
+
+  /// The presets generated for llama-server, including models.user.ini overrides.
+  /// Integrations use this so their model IDs and context sizes follow the same settings.
+  func effectiveModelSections() -> [UserModelOverrides.Section] {
     // User overrides are layered on top of everything the scan produces, so the
     // generated values below are only ever defaults. See `UserModelOverrides`.
     UserModelOverrides.reload()
-    let merged = UserModelOverrides.apply(
+    return UserModelOverrides.apply(
       to: generatedModelSections(), overrides: UserModelOverrides.current)
-    return UserModelOverrides.generatedFileHeader + merged.map { $0.serialized() }.joined()
   }
 
   /// The app's own view of `models.ini`, derived purely from the cache scan and
