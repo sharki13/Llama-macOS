@@ -391,6 +391,8 @@ struct ServerCommandView: View {
       }
     }
     .formStyle(.grouped)
+    .onAppear { stats.setMemoryMonitoringEnabled(true) }
+    .onDisappear { stats.setMemoryMonitoringEnabled(false) }
   }
 
   /// Opens the log in Console.app specifically -- the default app for `.log`
@@ -425,34 +427,25 @@ struct GenerationStatsView: View {
             LabeledContent("Model", value: model)
           }
           LabeledContent("Completed", value: latest.completedAt.formatted(date: .abbreviated, time: .shortened))
-          phaseRow("Prompt processing (PP)", phase: latest.prompt)
-          phaseRow("Token generation (TG)", phase: latest.generation)
+          HStack(alignment: .top, spacing: 16) {
+            phaseColumn(
+              "Prompt processing (PP)", phase: latest.prompt, summary: stats.summary?.prompt)
+            Divider().frame(minHeight: 44)
+            phaseColumn(
+              "Token generation (TG)", phase: latest.generation,
+              summary: stats.summary?.generation)
+          }
         } else {
           Text("Stats will appear after the next generation.")
             .foregroundStyle(.secondary)
         }
       }
-      Section("Last 100 generations") {
-        if let summary = stats.summary {
-          Text("Based on \(summary.count) generation\(summary.count == 1 ? "" : "s")")
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-          summaryRow("Prompt processing (PP)", values: summary.prompt)
-          summaryRow("Token generation (TG)", values: summary.generation)
-        } else {
-          Text("The average, minimum, and maximum will appear after the next generation.")
-            .foregroundStyle(.secondary)
-        }
-      }
       Section("Real Mem") {
         if let memoryBytes = stats.serverResidentBytes {
-          LabeledContent("Server + backends", value: Self.memoryString(bytes: memoryBytes))
-          if let updatedAt = stats.residentMemoryUpdatedAt {
-            LabeledContent("Updated", value: updatedAt.formatted(date: .omitted, time: .standard))
-          }
-          Text("Combined resident memory of the router and its backend processes.")
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+          LabeledContent("Current", value: Self.memoryString(bytes: memoryBytes))
+          LabeledContent(
+            "Peak",
+            value: stats.peakServerResidentBytes.map(Self.memoryString(bytes:)) ?? "—")
         } else {
           Text("Real Mem will appear when the server starts.")
             .foregroundStyle(.secondary)
@@ -462,36 +455,39 @@ struct GenerationStatsView: View {
     .formStyle(.grouped)
   }
 
-  private func phaseRow(_ title: String, phase: GenerationStats.Phase) -> some View {
+  private func phaseColumn(
+    _ title: String,
+    phase: GenerationStats.Phase,
+    summary: GenerationStats.RangeSummary?
+  ) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(title)
       HStack(spacing: 14) {
-        stat("Speed", value: String(format: "%.2f tok/s", phase.tokensPerSecond))
+        stat("Speed", value: String(format: "%.2f t/s", phase.tokensPerSecond))
         stat("Tokens", value: "\(phase.tokens)")
         stat("Time", value: String(format: "%.2f s", phase.milliseconds / 1000))
       }
       .font(.system(size: 11))
       .foregroundStyle(.secondary)
+
+      if let summary {
+        Divider().padding(.vertical, 3)
+        HStack(spacing: 14) {
+          stat("Average", value: String(format: "%.2f t/s", summary.average))
+          stat("Min", value: String(format: "%.2f t/s", summary.minimum))
+          stat("Max", value: String(format: "%.2f t/s", summary.maximum))
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+      }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func stat(_ title: String, value: String) -> some View {
     VStack(alignment: .leading, spacing: 2) {
       Text(title)
       Text(value).foregroundStyle(.primary).monospacedDigit()
-    }
-  }
-
-  private func summaryRow(_ title: String, values: GenerationStats.RangeSummary) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(title)
-      HStack(spacing: 14) {
-        stat("Average", value: String(format: "%.2f tok/s", values.average))
-        stat("Min", value: String(format: "%.2f tok/s", values.minimum))
-        stat("Max", value: String(format: "%.2f tok/s", values.maximum))
-      }
-      .font(.system(size: 11))
-      .foregroundStyle(.secondary)
     }
   }
 
@@ -523,7 +519,7 @@ struct BackendInfoView: View {
 
   var body: some View {
     Form {
-      Section("llama binary") {
+      Group {
         Picker("Use", selection: $selectedPath) {
           Text("Automatic").tag(Self.automaticChoice)
           ForEach(installations) { installation in
@@ -572,8 +568,8 @@ struct BackendInfoView: View {
 
   private func originName(_ origin: LlamaBinaries.Origin) -> String {
     switch origin {
-    case .managed: "Managed by Llama"
-    case .unsloth: "Unsloth build"
+    case .managed: "Built-in"
+    case .unsloth: "Unsloth"
     case .local: "~/.local/bin"
     case .brew: "Homebrew"
     case .external: "External install"
@@ -594,6 +590,7 @@ struct SettingsView: View {
   private var tab: SettingsTab { tabSelection.tab }
 
   @State private var launchAtLogin = LaunchAtLogin.isEnabled
+  @State private var automaticAppUpdates = UserSettings.automaticAppUpdates
   @State private var sleepIdleTime = UserSettings.sleepIdleTime
   @State private var agentMode = UserSettings.agentMode
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
@@ -642,6 +639,19 @@ struct SettingsView: View {
             .labelsHidden()
             .onChange(of: launchAtLogin) { _, newValue in
               _ = LaunchAtLogin.setEnabled(newValue)
+            }
+        }
+      }
+
+      Section {
+        SettingRow(
+          title: "Check for app updates automatically",
+          description: "Checks for new versions in the background. You can still check manually from the menu."
+        ) {
+          Toggle("", isOn: $automaticAppUpdates)
+            .labelsHidden()
+            .onChange(of: automaticAppUpdates) { _, enabled in
+              UserSettings.automaticAppUpdates = enabled
             }
         }
       }

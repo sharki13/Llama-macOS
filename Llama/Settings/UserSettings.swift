@@ -39,6 +39,7 @@ enum UserSettings {
   private enum Keys {
     static let hasSeenWelcome = "hasSeenWelcome"
     static let hasSetDefaultLaunchAtLogin = "hasSetDefaultLaunchAtLogin"
+    static let automaticAppUpdates = "SUEnableAutomaticChecks"
     static let exposeToNetwork = "exposeToNetwork"
     static let exposeToNetworkFingerprint = "exposeToNetworkFingerprint"
     static let serverPort = "serverPort"
@@ -63,6 +64,17 @@ enum UserSettings {
     }
     set {
       defaults.set(newValue, forKey: Keys.hasSeenWelcome)
+    }
+  }
+
+  /// Whether Sparkle checks for new app releases in the background.
+  /// Defaults to enabled, matching `SUEnableAutomaticChecks` in Info.plist.
+  static var automaticAppUpdates: Bool {
+    get {
+      defaults.object(forKey: Keys.automaticAppUpdates) as? Bool ?? true
+    }
+    set {
+      defaults.set(newValue, forKey: Keys.automaticAppUpdates)
     }
   }
 

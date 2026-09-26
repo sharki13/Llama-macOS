@@ -35,7 +35,9 @@ final class GenerationStats {
   private(set) var latest: Snapshot?
   private(set) var history: [Snapshot] = []
   private(set) var serverResidentBytes: UInt64?
+  private(set) var peakServerResidentBytes: UInt64?
   private(set) var residentMemoryUpdatedAt: Date?
+  private(set) var isMemoryMonitoringEnabled = false
   private var pendingPrompt: Phase?
   private var pendingModel: String?
   private var selectedModel: String?
@@ -51,6 +53,7 @@ final class GenerationStats {
   func noteModelSelection(_ modelId: String) {
     if let selectedModel, selectedModel != modelId {
       resetHistory()
+      peakServerResidentBytes = nil
     }
     selectedModel = modelId
   }
@@ -69,11 +72,17 @@ final class GenerationStats {
 
   func updateServerResidentMemory(bytes: UInt64) {
     serverResidentBytes = bytes
+    peakServerResidentBytes = max(peakServerResidentBytes ?? 0, bytes)
     residentMemoryUpdatedAt = Date()
+  }
+
+  func setMemoryMonitoringEnabled(_ enabled: Bool) {
+    isMemoryMonitoringEnabled = enabled
   }
 
   func clearServerResidentMemory() {
     serverResidentBytes = nil
+    peakServerResidentBytes = nil
     residentMemoryUpdatedAt = nil
   }
 
