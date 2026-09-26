@@ -173,9 +173,13 @@ enum UserModelOverrides {
   /// The context picker owns this key too, so when an override exists the
   /// picker can't be allowed to imply it's in charge -- see its use site.
   static func overriddenCtxSize(for modelId: String) -> String? {
-    guard !isSuspended else { return nil }
-    return current.first { $0.name == modelId }?
-      .pairs.first { $0.key == "ctx-size" }?.value
+    overriddenParameters(for: modelId).first { $0.key == "ctx-size" }?.value
+  }
+
+  /// The options supplied by the user for this model, in file order.
+  static func overriddenParameters(for modelId: String) -> [(key: String, value: String)] {
+    guard !isSuspended else { return [] }
+    return current.first { $0.name == modelId }?.pairs ?? []
   }
 
   /// Re-reads the user file into `current`, emptying it if absent or unreadable.

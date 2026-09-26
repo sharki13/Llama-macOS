@@ -68,17 +68,11 @@ final class ExpandedModelDetailsView: ItemView {
     } else if model.ctxBytesPer1kTokens < 0 {
       mainStack.addArrangedSubview(
         makeInfoLabel("Could not estimate memory — using 4k context"))
-    } else if let overridden = UserModelOverrides.overriddenCtxSize(for: model.id) {
+    } else if UserModelOverrides.overriddenCtxSize(for: model.id) != nil {
       // A `ctx-size` in models.user.ini beats whatever the picker would pick,
       // so showing the picker here would be a lie: the selection wouldn't
-      // match the running server, and clicking it would change nothing. Say
-      // where the value came from instead.
-      mainStack.addArrangedSubview(
-        makeInfoLabel(
-          "Context length \(Format.ctxOverride(overridden)) — set in \(UserModelOverrides.filename)",
-          toolTip:
-            "Remove ctx-size from \((UserModelOverrides.fileURL.path as NSString).abbreviatingWithTildeInPath) to use the picker again."
-        ))
+      // match the running server, and clicking it would change nothing. The
+      // override list below reports the value along with every other option.
     } else {
       // A "Context length" header, then the two-line segments below (tier
       // label over its projected memory cost, so each segment self-describes
@@ -183,6 +177,25 @@ final class ExpandedModelDetailsView: ItemView {
       // tier's own numbers instead of a general rule you'd have to apply
       // yourself. A caption would charge every model page, forever, for a
       // fact you only need once.
+    }
+
+    let parameters = UserModelOverrides.overriddenParameters(for: model.id)
+    if !parameters.isEmpty {
+      let overrides = NSStackView()
+      overrides.orientation = .vertical
+      overrides.alignment = .leading
+      overrides.spacing = 2
+
+      let heading = makeInfoLabel("Parameters set in \(UserModelOverrides.filename)")
+      overrides.addArrangedSubview(heading)
+      for parameter in parameters {
+        let label = makeInfoLabel("\(parameter.key) = \(parameter.value)")
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        overrides.addArrangedSubview(label)
+      }
+      overrides.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+      mainStack.addArrangedSubview(overrides)
     }
 
     contentView.addSubview(mainStack)
