@@ -391,8 +391,6 @@ struct ServerCommandView: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { stats.setMemoryMonitoringEnabled(true) }
-    .onDisappear { stats.setMemoryMonitoringEnabled(false) }
   }
 
   /// Opens the log in Console.app specifically -- the default app for `.log`
@@ -453,6 +451,8 @@ struct GenerationStatsView: View {
       }
     }
     .formStyle(.grouped)
+    .onAppear { stats.setMemoryMonitoringEnabled(true) }
+    .onDisappear { stats.setMemoryMonitoringEnabled(false) }
   }
 
   private func phaseColumn(
