@@ -449,6 +449,11 @@ struct GenerationStatsView: View {
           if let context = contextUsageText(latest: latest) {
             LabeledContent("Context", value: context)
           }
+          if let draft = stats.latestDraftAcceptance {
+            LabeledContent(
+              "Draft acceptance",
+              value: String(format: "%.1f%% (%d / %d)", draft.percent, draft.accepted, draft.generated))
+          }
           HStack(alignment: .top, spacing: 16) {
             phaseColumn(
               "Prompt processing (PP)", phase: latest.prompt, summary: stats.summary?.prompt)
@@ -462,14 +467,14 @@ struct GenerationStatsView: View {
             .foregroundStyle(.secondary)
         }
       }
-      Section("Real Mem") {
+      Section("Memory") {
         if let memoryBytes = stats.serverResidentBytes {
           LabeledContent("Current", value: Self.memoryString(bytes: memoryBytes))
           LabeledContent(
             "Peak",
             value: stats.peakServerResidentBytes.map(Self.memoryString(bytes:)) ?? "—")
         } else {
-          Text("Real Mem will appear when the server starts.")
+          Text("Memory usage will appear when the server starts.")
             .foregroundStyle(.secondary)
         }
       }
