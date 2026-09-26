@@ -52,6 +52,21 @@ struct LlamaServerAPI {
     }
   }
 
+  /// Fetches a model's current slot state through the router. GET requests in
+  /// router mode require a model query parameter. Do not wake a sleeping model
+  /// just to read statistics.
+  /// Each slot reports its context window (`n_ctx`) and, after a task, the
+  /// prompt length that occupied it (`n_prompt_tokens`).
+  func fetchSlots(modelId: String) async -> [SlotInfo]? {
+    guard let data = await get(
+      endpoint: "slots",
+      queryItems: [
+        URLQueryItem(name: "model", value: modelId),
+        URLQueryItem(name: "autoload", value: "false"),
+      ]) else { return nil }
+    return try? JSONDecoder().decode([SlotInfo].self, from: data)
+  }
+
   // MARK: - Private Helpers
 
   // Always the current effective host and port -- read live so a runtime change
@@ -76,8 +91,12 @@ struct LlamaServerAPI {
   }()
 
   /// Sends a GET request and returns the response data.
-  private func get(endpoint: String, timeout: TimeInterval = 2.0) async -> Data? {
-    guard let url = URL(string: "\(baseUrl)/\(endpoint)") else { return nil }
+  private func get(
+    endpoint: String, queryItems: [URLQueryItem] = [], timeout: TimeInterval = 2.0
+  ) async -> Data? {
+    guard var components = URLComponents(string: "\(baseUrl)/\(endpoint)") else { return nil }
+    if !queryItems.isEmpty { components.queryItems = queryItems }
+    guard let url = components.url else { return nil }
 
     var request = URLRequest(url: url)
     request.timeoutInterval = timeout
@@ -119,6 +138,23 @@ struct LlamaServerAPI {
   }
 
   // MARK: - Response Types
+
+  /// One entry of llama-server's `/slots` array. Fields beyond `id` are absent
+  /// while a slot has never handled a task, hence optional. `params` and
+  /// `prompt` are intentionally not decoded.
+  struct SlotInfo: Decodable {
+    let id: Int
+    let nCtx: Int?
+    let isProcessing: Bool?
+    let nPromptTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+      case id
+      case nCtx = "n_ctx"
+      case isProcessing = "is_processing"
+      case nPromptTokens = "n_prompt_tokens"
+    }
+  }
 
   private struct ModelsResponse: Decodable {
     struct ModelData: Decodable {

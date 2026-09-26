@@ -446,6 +446,9 @@ struct GenerationStatsView: View {
             LabeledContent("Model", value: model)
           }
           LabeledContent("Completed", value: latest.completedAt.formatted(date: .abbreviated, time: .shortened))
+          if let context = contextUsageText(latest: latest) {
+            LabeledContent("Context", value: context)
+          }
           HStack(alignment: .top, spacing: 16) {
             phaseColumn(
               "Prompt processing (PP)", phase: latest.prompt, summary: stats.summary?.prompt)
@@ -474,6 +477,20 @@ struct GenerationStatsView: View {
     .formStyle(.grouped)
     .onAppear { stats.setMemoryMonitoringEnabled(true) }
     .onDisappear { stats.setMemoryMonitoringEnabled(false) }
+  }
+
+  /// "12.3k / 32k (38%)" for the last generation's context load. The used
+  /// figure comes from `GET /slots`; if the server refuses that (`--no-slots`)
+  /// or no slot has handled a task yet, fall back to the log-derived prompt +
+  /// generated tokens, which undercounts when prompt caching is in play.
+  private func contextUsageText(latest: GenerationStats.Snapshot) -> String? {
+    let used = stats.latestContextTokens
+      ?? (latest.prompt.tokens + latest.generation.tokens)
+    guard let window = stats.latestContextWindowTokens else {
+      return used > 0 ? Format.tokens(used) : nil
+    }
+    let percent = window > 0 ? Int((Double(used) / Double(window) * 100).rounded()) : 0
+    return "\(Format.tokens(used)) / \(Format.tokens(window)) (\(percent)%)"
   }
 
   private func phaseColumn(

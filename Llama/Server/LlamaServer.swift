@@ -207,7 +207,12 @@ class LlamaServer {
       self.logger.info("llama-server: \(message, privacy: .public)")
       let lines = message.components(separatedBy: .newlines)
       Task { @MainActor in
-        lines.forEach { GenerationStats.shared.consumeTimingLine($0) }
+        // Consume every line -- `contains` would short-circuit and drop the rest.
+        var recorded = false
+        lines.forEach { if GenerationStats.shared.consumeTimingLine($0) { recorded = true } }
+        if recorded, let latest = GenerationStats.shared.latest {
+          await self.refreshContextStats(for: latest)
+        }
       }
     }
 
@@ -216,7 +221,11 @@ class LlamaServer {
       self.notePresetRejection(in: message)
       let lines = message.components(separatedBy: .newlines)
       Task { @MainActor in
-        lines.forEach { GenerationStats.shared.consumeTimingLine($0) }
+        var recorded = false
+        lines.forEach { if GenerationStats.shared.consumeTimingLine($0) { recorded = true } }
+        if recorded, let latest = GenerationStats.shared.latest {
+          await self.refreshContextStats(for: latest)
+        }
       }
     }
   }
@@ -920,6 +929,25 @@ class LlamaServer {
         try? await Task.sleep(nanoseconds: 1_000_000_000)
       }
     }
+  }
+
+  /// Reads the slot state for the completed generation's model. A later
+  /// generation may finish before this request, so only publish the response
+  /// while the snapshot is still the latest one.
+  @MainActor
+  func refreshContextStats(for snapshot: GenerationStats.Snapshot) async {
+    guard let modelId = snapshot.model,
+      let slots = await api.fetchSlots(modelId: modelId), !slots.isEmpty
+    else { return }
+    let slot = snapshot.slotId.flatMap { id in slots.first(where: { $0.id == id }) }
+      ?? slots.max(by: { ($0.nPromptTokens ?? -1) < ($1.nPromptTokens ?? -1) })
+    guard let slot else { return }
+    guard let usedTokens = slot.nPromptTokens, let windowTokens = slot.nCtx,
+      windowTokens > 0 else { return }
+    GenerationStats.shared.updateContext(
+      usedTokens: usedTokens,
+      windowTokens: windowTokens,
+      for: snapshot)
   }
 
   private func updateProcessMemory() {

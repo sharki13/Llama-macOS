@@ -18,6 +18,7 @@ final class GenerationStats {
     let generation: Phase
     let completedAt: Date
     let model: String?
+    let slotId: Int?
   }
 
   struct RangeSummary {
@@ -34,13 +35,17 @@ final class GenerationStats {
 
   private(set) var latest: Snapshot?
   private(set) var history: [Snapshot] = []
+  private(set) var latestContextTokens: Int?
+  private(set) var latestContextWindowTokens: Int?
   private(set) var serverResidentBytes: UInt64?
   private(set) var peakServerResidentBytes: UInt64?
   private(set) var residentMemoryUpdatedAt: Date?
   private(set) var isMemoryMonitoringEnabled = false
   private var pendingPrompt: Phase?
   private var pendingModel: String?
+  private var pendingSlotId: Int?
   private var selectedModel: String?
+  private var latestContextMayUpdate = false
 
   var summary: Summary? {
     guard !history.isEmpty else { return nil }
@@ -62,12 +67,28 @@ final class GenerationStats {
     history.removeAll(keepingCapacity: true)
     pendingPrompt = nil
     pendingModel = nil
+    pendingSlotId = nil
+    latestContextTokens = nil
+    latestContextWindowTokens = nil
+    latestContextMayUpdate = false
   }
 
   func resetForServerRestart() {
     resetHistory()
     selectedModel = nil
     clearServerResidentMemory()
+  }
+
+  func updateContext(usedTokens: Int?, windowTokens: Int?) {
+    latestContextTokens = usedTokens
+    latestContextWindowTokens = windowTokens
+  }
+
+  func updateContext(
+    usedTokens: Int?, windowTokens: Int?, for snapshot: Snapshot
+  ) {
+    guard latest == snapshot, latestContextMayUpdate else { return }
+    updateContext(usedTokens: usedTokens, windowTokens: windowTokens)
   }
 
   func updateServerResidentMemory(bytes: UInt64) {
@@ -86,8 +107,13 @@ final class GenerationStats {
     residentMemoryUpdatedAt = nil
   }
 
-  func consumeTimingLine(_ line: String) {
-    guard let phase = Self.parsePhase(line) else { return }
+  /// Consumes one server log line, recording a `Snapshot` once both timing
+  /// phases of a generation have been seen. Returns true when a snapshot was
+  /// recorded, so the caller can refresh context data from the server.
+  @discardableResult
+  func consumeTimingLine(_ line: String) -> Bool {
+    if let slotId = Self.parseTimingSlotID(line) { pendingSlotId = slotId }
+    guard let phase = Self.parsePhase(line) else { return false }
 
     if line.localizedCaseInsensitiveContains("prompt eval time") {
       pendingPrompt = phase
@@ -95,19 +121,26 @@ final class GenerationStats {
       if let pendingModel { noteModelSelection(pendingModel) }
     } else if line.localizedCaseInsensitiveContains("generation eval time")
                 || line.localizedCaseInsensitiveContains("eval time =") {
-      guard let prompt = pendingPrompt else { return }
+      guard let prompt = pendingPrompt else { return false }
       let snapshot = Snapshot(
         prompt: prompt,
         generation: phase,
         completedAt: Date(),
-        model: pendingModel)
+        model: pendingModel,
+        slotId: pendingSlotId)
       latest = snapshot
+      latestContextTokens = nil
+      latestContextWindowTokens = nil
+      latestContextMayUpdate = true
       if let model = snapshot.model { noteModelSelection(model) }
       history.append(snapshot)
       if history.count > 100 { history.removeFirst(history.count - 100) }
       pendingPrompt = nil
       pendingModel = nil
+      pendingSlotId = nil
+      return true
     }
+    return false
   }
 
   private static func summarize(_ values: [Double]) -> RangeSummary {
@@ -115,6 +148,15 @@ final class GenerationStats {
       average: values.reduce(0, +) / Double(values.count),
       minimum: values.min() ?? 0,
       maximum: values.max() ?? 0)
+  }
+
+  private static func parseTimingSlotID(_ line: String) -> Int? {
+    guard line.contains("print_timing"),
+      let regex = try? NSRegularExpression(pattern: #"\bid\s+(\d+)"#),
+      let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+      let range = Range(match.range(at: 1), in: line)
+    else { return nil }
+    return Int(line[range])
   }
 
   private static func parsePhase(_ line: String) -> Phase? {
