@@ -357,8 +357,26 @@ struct SettingsSidebar: View {
 /// for: "Advanced" describes a disposition, and nothing else here is filed
 /// that way.
 struct ServerCommandView: View {
+  @State private var metalNoResidency = UserSettings.metalNoResidency
+
   var body: some View {
     Form {
+      Section {
+        SettingRow(
+          title: "Disable Metal residency tracking",
+          description: "Sets GGML_METAL_NO_RESIDENCY=1 for the server."
+        ) {
+          Toggle("", isOn: Binding(
+            get: { metalNoResidency },
+            set: { enabled in
+              UserSettings.metalNoResidency = enabled
+              metalNoResidency = enabled
+            }
+          ))
+          .labelsHidden()
+        }
+      }
+
       Section {
         Text("The command the app runs to start the server.")
           .font(.system(size: 11))

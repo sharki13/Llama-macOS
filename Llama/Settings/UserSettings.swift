@@ -47,6 +47,7 @@ enum UserSettings {
     static let selectedCtxTiers = "selectedCtxTiers"
     static let extraServerArgs = "extraServerArgs"
     static let agentMode = "agentMode"
+    static let metalNoResidency = "metalNoResidency"
     static let hfCacheDirectory = "hfCacheDirectory"
     static let hfToken = "hfToken"
     static let modelLastUsedDates = "modelLastUsedDates"
@@ -336,6 +337,17 @@ enum UserSettings {
     set {
       guard newValue != agentMode else { return }
       defaults.set(newValue, forKey: Keys.agentMode)
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+    }
+  }
+
+  /// Whether to set GGML_METAL_NO_RESIDENCY=1 for llama-server.
+  /// Enabled by default to preserve the launch behavior used by the app so far.
+  static var metalNoResidency: Bool {
+    get { defaults.object(forKey: Keys.metalNoResidency) as? Bool ?? true }
+    set {
+      guard newValue != metalNoResidency else { return }
+      defaults.set(newValue, forKey: Keys.metalNoResidency)
       NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
     }
   }

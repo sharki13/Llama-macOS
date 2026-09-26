@@ -402,12 +402,15 @@ class LlamaServer {
 
     let presetsPath = UserSettings.appSupportDir.appendingPathComponent("models.ini").path
 
-    let env = [
-      (key: "GGML_METAL_NO_RESIDENCY", value: "1"),
+    var env: [(key: String, value: String)] = []
+    if UserSettings.metalNoResidency {
+      env.append((key: "GGML_METAL_NO_RESIDENCY", value: "1"))
+    }
+    env.append(contentsOf: [
       // Set HF_HUB_CACHE so llama-server can resolve model paths in preset
       (key: "HF_HUB_CACHE", value: UserSettings.hfCacheDirectory.path),
       (key: "LLAMA_CACHE", value: Self.emptyCachePath),
-    ]
+    ])
 
     // Order here is purely cosmetic (`serve` ignores flag order) -- it's
     // chosen so the rendered command reads well: the two path flags grouped up
