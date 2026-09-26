@@ -46,6 +46,7 @@ enum UserSettings {
     static let sleepIdleTime = "sleepIdleTime"
     static let selectedCtxTiers = "selectedCtxTiers"
     static let extraServerArgs = "extraServerArgs"
+    static let allowUnauthenticatedAPI = "allowUnauthenticatedAPI"
     static let agentMode = "agentMode"
     static let metalNoResidency = "metalNoResidency"
     static let hfCacheDirectory = "hfCacheDirectory"
@@ -352,12 +353,26 @@ enum UserSettings {
     }
   }
 
+  // MARK: - API Authentication
+
+  /// Existing installations remain open until the user explicitly requires
+  /// tokens. The server's public health and UI asset routes are exempt.
+  static var allowUnauthenticatedAPI: Bool {
+    get { defaults.object(forKey: Keys.allowUnauthenticatedAPI) as? Bool ?? true }
+    set {
+      guard newValue != allowUnauthenticatedAPI else { return }
+      defaults.set(newValue, forKey: Keys.allowUnauthenticatedAPI)
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+    }
+  }
+
   // MARK: - Extra Server Arguments
 
   /// Extra `llama serve` CLI arguments -- an unadvertised escape hatch for
-  /// server flags the app doesn't expose (e.g. a CORS proxy flag, `--api-key`,
-  /// KV-cache quantization). Set via defaults; there's deliberately no UI yet:
-  ///   `defaults write app.llama.Llama extraServerArgs -string "--api-key secret"`
+  /// server flags the app doesn't expose (e.g. a CORS proxy flag or KV-cache
+  /// quantization). API authentication is configured in Settings > Tokens.
+  /// Set via defaults; there's deliberately no UI yet:
+  ///   `defaults write app.llama.Llama extraServerArgs -string "--timeout 600"`
   ///   `defaults delete app.llama.Llama extraServerArgs` → none
   /// Tokenized by splitting on whitespace, so `--flag value` works naturally;
   /// no shell is involved in launching the server, so there's no quoting layer
@@ -369,6 +384,13 @@ enum UserSettings {
   static var extraServerArgList: [String] {
     guard let raw = defaults.string(forKey: Keys.extraServerArgs) else { return [] }
     return raw.split(whereSeparator: \.isWhitespace).map(String.init)
+  }
+
+  static var extraArgsContainAPIKey: Bool {
+    extraServerArgList.contains { arg in
+      arg == "--api-key" || arg.hasPrefix("--api-key=")
+        || arg == "--api-key-file" || arg.hasPrefix("--api-key-file=")
+    }
   }
 
   /// Preferred llama executable path. Nil uses automatic discovery order.

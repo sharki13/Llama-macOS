@@ -13,6 +13,7 @@ enum ModelLoadState: String, Equatable {
 /// Encapsulates request building and response parsing for server endpoints.
 struct LlamaServerAPI {
   private let logger = Logger(subsystem: Logging.subsystem, category: "LlamaServerAPI")
+  var authToken: String? = nil
 
   // MARK: - Public API
 
@@ -80,6 +81,7 @@ struct LlamaServerAPI {
 
     var request = URLRequest(url: url)
     request.timeoutInterval = timeout
+    authorize(&request)
 
     do {
       let (data, response) = try await Self.session.data(for: request)
@@ -100,6 +102,7 @@ struct LlamaServerAPI {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    authorize(&request)
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
     do {
@@ -108,6 +111,11 @@ struct LlamaServerAPI {
     } catch {
       return false
     }
+  }
+
+  private func authorize(_ request: inout URLRequest) {
+    guard !UserSettings.allowUnauthenticatedAPI, let token = authToken else { return }
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
   }
 
   // MARK: - Response Types

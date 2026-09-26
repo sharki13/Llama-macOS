@@ -134,6 +134,7 @@ class LlamaServer {
   private var outputPipe: Pipe?
   private var errorPipe: Pipe?
   private var activeProcess: Process?
+  private var activeKeyFileURL: URL?
   /// Bumped by every `start()`/`stop()`. `start()` runs its port-freeing
   /// pre-flight off the main actor, then compares this token before launching so
   /// a newer `start()`/`stop()` issued meanwhile wins (the older pre-flight bails).
@@ -147,7 +148,7 @@ class LlamaServer {
   /// Static counterpart, for the type-level helpers (bind-address resolution).
   nonisolated private static let logger = Logger(
     subsystem: Logging.subsystem, category: "LlamaServer")
-  private let api = LlamaServerAPI()
+  private var api = LlamaServerAPI()
 
   enum ServerState: Equatable {
     case idle
@@ -341,7 +342,15 @@ class LlamaServer {
       // and safe only because this is the *last* line -- a `#` comment would
       // swallow a trailing `\` continuation on any earlier line.
       if extraArgCount > 0 {
-        let extra = arguments.suffix(extraArgCount).map(Self.quote).joined(separator: " ")
+        var displayArgs = Array(arguments.suffix(extraArgCount))
+        for index in displayArgs.indices {
+          if index > 0 && displayArgs[index - 1] == "--api-key" {
+            displayArgs[index] = "<redacted>"
+          } else if displayArgs[index].hasPrefix("--api-key=") {
+            displayArgs[index] = "--api-key=<redacted>"
+          }
+        }
+        let extra = displayArgs.map(Self.quote).joined(separator: " ")
         lines.append("\(extra)  # custom arguments")
       }
 
@@ -452,10 +461,14 @@ class LlamaServer {
       arguments.append("--agent")
     }
 
+    if !UserSettings.allowUnauthenticatedAPI {
+      arguments.append(contentsOf: ["--api-key-file", APITokenStore.serverKeyFileURL.path])
+    }
+
     // User-supplied extra args (the `extraServerArgs` default) go at the very
     // end, so where llama-server honors the later occurrence they can
-    // override the app's own flags. Passed verbatim -- no validation; a bad
-    // flag surfaces as a launch failure like any other server error.
+    // override the app's own flags. Apart from rejecting competing auth flags
+    // when Tokens enforcement is on, bad flags surface as launch failures.
     let extraArgs = UserSettings.extraServerArgList
     arguments.append(contentsOf: extraArgs)
 
@@ -573,6 +586,8 @@ class LlamaServer {
     cleanUpPipes()
     let previous = activeProcess
     activeProcess = nil
+    let previousKeyFile = activeKeyFileURL
+    activeKeyFileURL = nil
 
     state = .loading
     startGeneration += 1
@@ -592,12 +607,15 @@ class LlamaServer {
       // seconds under load, so they must not run on the main actor.
       let blocker = await Task.detached {
         Self.terminateAndWait(previous)
+        APITokenStore.removeServerKeyFile(previousKeyFile)
         return Self.reclaimPort()
       }.value
 
       // Back on the main actor. Bail if a newer start()/stop() superseded us
       // while we were off the main actor.
       guard generation == startGeneration, state == .loading else { return }
+
+      APITokenStore.removeStaleServerKeyFiles()
 
       // If some *other* process (one we won't kill) still holds the port, don't
       // launch into a silent bind failure -- surface a clear conflict instead.
@@ -615,14 +633,31 @@ class LlamaServer {
   }
 
   /// Builds the launch spec and starts the llama-server process. Main-actor only,
-  /// run after `start()`'s off-main pre-flight has freed the port. Fast: nothing
-  /// here blocks (`process.run()` returns immediately).
+  /// run after `start()`'s off-main pre-flight has freed the port.
   private func launchServerProcess() {
     // Resolve the launch spec up front; a missing install surfaces as an error.
     guard let spec = Self.buildLaunchSpec() else {
       logger.error("llama binary not found")
       state = .error(.invalidPath("llama"))
       return
+    }
+
+    if !UserSettings.allowUnauthenticatedAPI {
+      guard !UserSettings.extraArgsContainAPIKey else {
+        state = .error(.launchFailed(
+          "Remove --api-key or --api-key-file from extraServerArgs before using Tokens."))
+        return
+      }
+      do {
+        let credential = try APITokenStore.prepareServerKeyFile()
+        activeKeyFileURL = credential.url
+        api.authToken = credential.internalToken
+      } catch {
+        state = .error(.launchFailed(error.localizedDescription))
+        return
+      }
+    } else {
+      api.authToken = nil
     }
 
     // Ensure the empty-cache dir referenced by LLAMA_CACHE exists.
@@ -644,6 +679,10 @@ class LlamaServer {
     process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
     var environment = ProcessInfo.processInfo.environment
+    // These upstream environment variables would silently change the policy
+    // chosen in Tokens, so the app's managed server never inherits them.
+    environment.removeValue(forKey: "LLAMA_API_KEY")
+    environment.removeValue(forKey: "LLAMA_ARG_API_KEY_FILE")
     // Xcode may enable Metal API validation for the app. Its debug layer is
     // inherited by router children and can abort otherwise working llama.cpp
     // Metal kernels (notably Qwen3.8-Flash-Next at 128k context).
@@ -688,6 +727,8 @@ class LlamaServer {
       logger.error("Failed to launch process: \(error)")
       self.state = .error(.launchFailed(errorMessage))
       self.modelStatuses = [:]
+      APITokenStore.removeServerKeyFile(activeKeyFileURL)
+      activeKeyFileURL = nil
       return
     }
     startStatusPolling()
@@ -767,6 +808,8 @@ class LlamaServer {
     let process = activeProcess
     activeProcess = nil
     Self.terminateAndWait(process)
+    APITokenStore.removeServerKeyFile(activeKeyFileURL)
+    activeKeyFileURL = nil
   }
 
   /// Terminates `process` and blocks until it exits, escalating to SIGKILL after

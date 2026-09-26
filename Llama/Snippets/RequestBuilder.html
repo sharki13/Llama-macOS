@@ -101,7 +101,7 @@
     color: var(--muted);
     margin-bottom: 8px;
   }
-  select, textarea, input[type=text] {
+  select, textarea, input[type=text], input[type=password] {
     width: 100%;
     font: inherit;
     color: var(--text);
@@ -280,6 +280,12 @@
       <select id="model"></select>
     </div>
 
+    <div class="group" id="tokenGroup" hidden>
+      <label class="title" for="apiToken">API token</label>
+      <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a token from Settings">
+      <span class="hint">Used for Send on this page. Snippets read LLAMA_API_KEY from your environment.</span>
+    </div>
+
     <div class="group">
       <span class="section-title">Options</span>
 
@@ -364,6 +370,12 @@
 // ---------------------------------------------------------------------------
 const CONFIG = window.LLAMA_CONFIG || {};
 const BASE = CONFIG.baseUrl || "http://localhost:9931";
+let REQUIRES_TOKEN = !!CONFIG.requiresToken;
+document.getElementById("tokenGroup").hidden = !REQUIRES_TOKEN;
+function authHeaders() {
+  const token = document.getElementById("apiToken").value.trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 // Models with a vision projector, learned from /v1/models. `knowCapabilities`
 // stays false when the server can't be reached, in which case nothing is
@@ -404,7 +416,8 @@ const state = {
 async function loadModels() {
   const sel = document.getElementById("model");
   try {
-    const r = await fetch(BASE + "/v1/models");
+    const r = await fetch(BASE + "/v1/models", { headers: authHeaders() });
+    if (r.status === 401) throw new Error("auth");
     const models = (await r.json()).data;
     // A model can take images only if a projector is configured for it, which
     // the server reports as --mmproj in the launch args it would use. There's
@@ -428,8 +441,17 @@ async function loadModels() {
     // Success is silent: the dropdown already shows what's installed, and
     // counting it back is noise.
     document.getElementById("offline").hidden = true;
-  } catch {
+  } catch (error) {
     sel.innerHTML = `<option>${state.model}</option>`;
+    if (error.message === "auth") {
+      REQUIRES_TOKEN = true;
+      document.getElementById("tokenGroup").hidden = false;
+      document.getElementById("offlineTitle").textContent = "API token required";
+      document.getElementById("offlineDetail").textContent = "Paste a token from Settings → Tokens to load models and use Send.";
+      document.getElementById("offline").hidden = false;
+      render();
+      return;
+    }
     // A failed fetch is opaque -- "nothing is listening" and "the browser
     // blocked the response" throw the same error. Ask again in no-cors mode
     // to tell them apart: that resolves (with a response we can't read)
@@ -590,7 +612,8 @@ function snippetCurl() {
   const hdr = state.api === "anthropic"
     ? `  -H "Content-Type: application/json" \\\n  -H "anthropic-version: 2023-06-01" \\\n`
     : `  -H "Content-Type: application/json" \\\n`;
-  return `curl ${BASE}${path()} \\\n${hdr}  -d '${JSON.stringify(buildBody(), null, 2).split("\n").map((l,i)=> i===0?l:"  "+l).join("\n")}'`;
+  const auth = REQUIRES_TOKEN ? `  -H "Authorization: Bearer $LLAMA_API_KEY" \\\n` : "";
+  return `curl ${BASE}${path()} \\\n${auth}${hdr}  -d '${JSON.stringify(buildBody(), null, 2).split("\n").map((l,i)=> i===0?l:"  "+l).join("\n")}'`;
 }
 
 // Which client method to call and what to print, shared by the Python and
@@ -602,18 +625,20 @@ function openaiNames() {
 }
 
 function snippetPython() {
+  const key = REQUIRES_TOKEN ? "os.environ[\"LLAMA_API_KEY\"]" : '"no-key"';
+  const imports = REQUIRES_TOKEN ? "import os\n" : "";
   if (state.api === "anthropic") {
-    return `import anthropic
+    return `${imports}import anthropic
 
-client = anthropic.Anthropic(base_url="${BASE}", api_key="no-key")
+client = anthropic.Anthropic(base_url="${BASE}", api_key=${key})
 
 message = client.messages.create(\n${pyArgs(buildBody(), "    ")}\n)
 print(message.content)`;
   }
   const { call, out } = openaiNames();
-  return `from openai import OpenAI
+  return `${imports}from openai import OpenAI
 
-client = OpenAI(base_url="${BASE}/v1", api_key="no-key")
+client = OpenAI(base_url="${BASE}/v1", api_key=${key})
 
 response = ${call}(\n${pyArgs(buildBody(), "    ")}\n)
 print(${out})`;
@@ -647,10 +672,11 @@ function pyArgs(body, indent) {
 }
 
 function snippetJs() {
+  const key = REQUIRES_TOKEN ? "process.env.LLAMA_API_KEY" : '"no-key"';
   if (state.api === "anthropic") {
     return `import Anthropic from "@anthropic-ai/sdk";
 
-const client = new Anthropic({ baseURL: "${BASE}", apiKey: "no-key" });
+const client = new Anthropic({ baseURL: "${BASE}", apiKey: ${key} });
 
 const message = await client.messages.create(${JSON.stringify(buildBody(), null, 2)});
 console.log(message.content);`;
@@ -658,7 +684,7 @@ console.log(message.content);`;
   const { call, out } = openaiNames();
   return `import OpenAI from "openai";
 
-const client = new OpenAI({ baseURL: "${BASE}/v1", apiKey: "no-key" });
+const client = new OpenAI({ baseURL: "${BASE}/v1", apiKey: ${key} });
 
 const response = await ${call}(${JSON.stringify(buildBody(), null, 2)});
 console.log(${out});`;
@@ -791,6 +817,7 @@ seg("langSeg", "lang");
 document.getElementById("model").addEventListener("change", e => {
   state.model = e.target.value; render();
 });
+document.getElementById("apiToken").addEventListener("change", loadModels);
 
 document.getElementById("copy").addEventListener("click", async e => {
   await navigator.clipboard.writeText(currentSnippet());
@@ -825,7 +852,7 @@ async function send() {
   (async () => {
     try {
       while (watching) {
-        const r = await fetch(BASE + "/v1/models");
+        const r = await fetch(BASE + "/v1/models", { headers: authHeaders() });
         const m = (await r.json()).data.find(x => x.id === state.model);
         if (!watching) return;
         if (m?.status?.value === "loaded") {
@@ -854,8 +881,8 @@ async function send() {
       // sending it on every request would mean Send and the displayed code
       // disagree about what goes on the wire.
       headers: state.api === "anthropic"
-        ? { "Content-Type": "application/json", "anthropic-version": "2023-06-01" }
-        : { "Content-Type": "application/json" },
+        ? { "Content-Type": "application/json", "anthropic-version": "2023-06-01", ...authHeaders() }
+        : { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(buildBody()),
     });
     if (state.stream) {

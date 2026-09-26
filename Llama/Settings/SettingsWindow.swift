@@ -205,6 +205,7 @@ private struct RestoreDefaultButton: View {
 enum SettingsTab: CaseIterable, Identifiable {
   case general
   case network
+  case tokens
   case downloads
   case webUI
   case command
@@ -217,6 +218,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     switch self {
     case .general: "General"
     case .network: "Network"
+    case .tokens: "Tokens"
     case .downloads: "Downloads"
     case .webUI: "Web UI"
     case .command: "Command"
@@ -229,6 +231,7 @@ enum SettingsTab: CaseIterable, Identifiable {
     switch self {
     case .general: "gearshape"
     case .network: "network"
+    case .tokens: "key.horizontal"
     case .downloads: "arrow.down.circle"
     case .webUI: "macwindow"
     case .command: "terminal"
@@ -628,6 +631,7 @@ struct SettingsView: View {
     switch tab {
     case .general: generalForm
     case .network: networkForm
+    case .tokens: TokensSettingsView()
     case .downloads: downloadsForm
     case .webUI: webUIForm
     case .command: ServerCommandView()
@@ -1056,7 +1060,9 @@ struct SettingsView: View {
           if option == .localNetwork, agentMode {
             // "Would", not "gets": this shows on the option whether or not it's
             // selected, so it has to be true of a choice not yet made.
-            SettingCaution(text: "Agent mode is on, so anyone who connects would get file access.")
+            SettingCaution(text: UserSettings.allowUnauthenticatedAPI
+              ? "Agent mode is on, so anyone who connects would get file access."
+              : "Agent mode is on, so clients with a token would get file access.")
               .padding(.top, 2)
           }
         }
@@ -1102,7 +1108,9 @@ struct SettingsView: View {
         "anyone on your current network"
       }
 
-    return "Network access is on, so \(who) could do this too."
+    return UserSettings.allowUnauthenticatedAPI
+      ? "Network access is on, so \(who) could do this too."
+      : "Network access is on, so clients with a token could do this too."
   }
 
   /// The address `option` binds, or nil when there's nothing true to print
@@ -1118,7 +1126,7 @@ struct SettingsView: View {
 
   /// What choosing `option` would do -- written for someone deciding, not for
   /// someone reading back their own setting. Worth varying: the warning that
-  /// matters for `.localNetwork` (no password, anyone on this wifi) is simply
+  /// matters for `.localNetwork` (anyone on this wifi can connect) is simply
   /// untrue of Tailscale, which authenticates every device itself.
   private func networkAccessDescription(_ option: UserSettings.NetworkAccess) -> String {
     switch option {
@@ -1137,7 +1145,9 @@ struct SettingsView: View {
     case .tailscale:
       return "Reachable from your Tailscale devices, anywhere. Stays invisible on the network you're on."
     case .localNetwork:
-      return "Anyone on your current network can reach the server. It has no password -- only turn this on for a network you trust."
+      return UserSettings.allowUnauthenticatedAPI
+        ? "Anyone on your current network can use the API without a token. Only turn this on for a network you trust."
+        : "Anyone on your current network can connect, but API requests require a token. HTTP is not encrypted."
     case .custom:
       return "Bound to an address set outside the app."
     }

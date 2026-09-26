@@ -88,7 +88,11 @@ By default the server is reachable only from your Mac. "Allow network access" in
 
 `Tailscale` — binds the server to your Tailscale address. Your other devices reach it from anywhere, Tailscale authenticates and encrypts the connection, and the server stays invisible on whatever network you're on. This is the option to use on a laptop. Shown only when Tailscale is installed and signed in.
 
-`This network` — binds all interfaces (`0.0.0.0`), so anything on your current network can reach it. The server has no password, so use it only on a network you trust, and never together with agent mode on a network you don't own.
+`This network` — binds all interfaces (`0.0.0.0`), so anything on your current network can reach it. Use the Tokens tab to require API tokens before exposing it to other devices. HTTP itself is not encrypted, so use it only on a network you trust; Tailscale is preferable for access across networks.
+
+## API tokens
+
+Open **Settings → Tokens** to generate client tokens, give them aliases, see when they were created, and delete them. A new token is shown once, so copy it when you create it. By default API requests without a token are allowed, preserving existing local clients. Turn off **Allow API requests without a token** to enforce tokens. Send one as `Authorization: Bearer <token>` (or `X-Api-Key: <token>`). The app keeps the token list in macOS Keychain and restarts the server when enforcement or the active list changes. While the server runs, it reads a private `0600` key file under Application Support; the app removes that file when the server stops and on the next start after a crash. The server's health endpoint and static Web UI files remain public.
 
 ## Experimental settings
 
@@ -98,11 +102,11 @@ By default the server is reachable only from your Mac. "Allow network access" in
 defaults write app.llama.Llama exposeToNetwork -string "192.168.1.50"
 ```
 
-**Custom server arguments** — Extra CLI arguments appended to the `llama serve` command, for server flags the app doesn't expose (e.g. `--api-key`). They come after the app's own flags, so where the server honors the later occurrence they can override the app's settings. Takes effect on the next server start.
+**Custom server arguments** — Extra CLI arguments appended to the `llama serve` command, for server flags the app doesn't expose. They come after the app's own flags, so where the server honors the later occurrence they can override the app's settings. Takes effect on the next server start. Configure API authentication in **Settings → Tokens** instead.
 
 ```sh
 # append custom arguments to the server command
-defaults write app.llama.Llama extraServerArgs -string "--api-key secret"
+defaults write app.llama.Llama extraServerArgs -string "--timeout 600"
 
 # remove (default)
 defaults delete app.llama.Llama extraServerArgs

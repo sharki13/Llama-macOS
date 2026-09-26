@@ -46,7 +46,12 @@ enum RequestBuilder {
     let base = "http://\(LlamaServer.resolvedHost):\(LlamaServer.port)"
     // Encoded as JSON so a model id containing quotes can't break out of the
     // surrounding script.
-    guard let json = try? JSONSerialization.data(withJSONObject: ["baseUrl": base, "model": modelId]),
+    let pageConfig: [String: Any] = [
+      "baseUrl": base,
+      "model": modelId,
+      "requiresToken": !UserSettings.allowUnauthenticatedAPI,
+    ]
+    guard let json = try? JSONSerialization.data(withJSONObject: pageConfig),
       let config = String(data: json, encoding: .utf8)
     else { return nil }
 
