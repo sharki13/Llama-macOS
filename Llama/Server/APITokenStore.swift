@@ -2,8 +2,9 @@ import Foundation
 import Security
 import Darwin
 
-/// Client credentials for llama-server. Secrets and their metadata live in the
-/// login Keychain; UserDefaults only stores the anonymous-access preference.
+/// Client credentials for llama-server. Client secrets and their metadata live
+/// in the login Keychain; the app's own server credential is regenerated for
+/// each run and kept in the temporary server key file only while it runs.
 enum APITokenStore {
   struct Token: Identifiable {
     let id: String
@@ -28,8 +29,9 @@ enum APITokenStore {
     }
   }
 
-  private static let service = "\(Bundle.main.bundleIdentifier ?? "app.llama.Llama").api-tokens"
-  private static let internalAccount = "internal-server-client"
+  private static let service = "\(Bundle.main.bundleIdentifier ?? "app.llama.Llama").client-api-tokens"
+  private static let cacheLock = NSLock()
+  private static var cachedClientSecrets: [String: String]?
 
   private static func query(account: String? = nil) -> [String: Any] {
     var result: [String: Any] = [
@@ -54,7 +56,6 @@ enum APITokenStore {
       guard let id = item[kSecAttrAccount as String] as? String else {
         throw StoreError.invalidItem
       }
-      if id == internalAccount { return nil }
       guard let alias = item[kSecAttrLabel as String] as? String,
         let createdAt = item[kSecAttrCreationDate as String] as? Date
       else { throw StoreError.invalidItem }
@@ -65,41 +66,41 @@ enum APITokenStore {
   /// Returns the value once for the creation sheet. The list view never reads it.
   static func create(alias: String) throws -> String {
     let value = try randomToken()
-    try add(value: value, account: UUID().uuidString, alias: alias)
+    let id = UUID().uuidString
+    cacheLock.lock()
+    defer { cacheLock.unlock() }
+    try add(value: value, account: id, alias: alias)
+    cachedClientSecrets?[id] = value
     return value
   }
 
   static func rename(id: String, alias: String) throws {
-    guard id != internalAccount else { throw StoreError.invalidItem }
     let attributes = [kSecAttrLabel as String: alias]
     let status = SecItemUpdate(query(account: id) as CFDictionary, attributes as CFDictionary)
     guard status == errSecSuccess else { throw StoreError.keychain(status) }
   }
 
   static func delete(id: String) throws {
-    guard id != internalAccount else { throw StoreError.invalidItem }
+    cacheLock.lock()
+    defer { cacheLock.unlock() }
     let status = SecItemDelete(query(account: id) as CFDictionary)
     guard status == errSecSuccess else { throw StoreError.keychain(status) }
-  }
-
-  static func internalToken() throws -> String {
-    if let existing = try read(account: internalAccount) { return existing }
-    let value = try randomToken()
-    do {
-      try add(value: value, account: internalAccount, alias: "Llama internal client")
-      return value
-    } catch StoreError.keychain(errSecDuplicateItem) {
-      guard let existing = try read(account: internalAccount) else { throw StoreError.invalidItem }
-      return existing
-    }
+    cachedClientSecrets?.removeValue(forKey: id)
   }
 
   static func allServerKeys() throws -> [String] {
-    let tokens = try list()
-    return try [internalToken()] + tokens.map { token in
-      guard let value = try read(account: token.id) else { throw StoreError.invalidItem }
-      return value
+    cacheLock.lock()
+    defer { cacheLock.unlock() }
+    if cachedClientSecrets == nil {
+      let tokens = try list()
+      var secrets: [String: String] = [:]
+      for token in tokens {
+        guard let value = try read(account: token.id) else { throw StoreError.invalidItem }
+        secrets[token.id] = value
+      }
+      cachedClientSecrets = secrets
     }
+    return try [randomToken()] + Array((cachedClientSecrets ?? [:]).values)
   }
 
   private static func read(account: String) throws -> String? {
