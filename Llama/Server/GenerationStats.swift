@@ -19,6 +19,14 @@ final class GenerationStats {
     let completedAt: Date
     let model: String?
     let slotId: Int?
+    let taskId: Int?
+  }
+
+  struct DraftAcceptance: Equatable {
+    let accepted: Int
+    let generated: Int
+
+    var percent: Double { Double(accepted) / Double(generated) * 100 }
   }
 
   struct RangeSummary {
@@ -37,6 +45,7 @@ final class GenerationStats {
   private(set) var history: [Snapshot] = []
   private(set) var latestContextTokens: Int?
   private(set) var latestContextWindowTokens: Int?
+  private(set) var latestDraftAcceptance: DraftAcceptance?
   private(set) var serverResidentBytes: UInt64?
   private(set) var peakServerResidentBytes: UInt64?
   private(set) var residentMemoryUpdatedAt: Date?
@@ -44,6 +53,7 @@ final class GenerationStats {
   private var pendingPrompt: Phase?
   private var pendingModel: String?
   private var pendingSlotId: Int?
+  private var pendingTaskId: Int?
   private var selectedModel: String?
   private var latestContextMayUpdate = false
 
@@ -68,8 +78,10 @@ final class GenerationStats {
     pendingPrompt = nil
     pendingModel = nil
     pendingSlotId = nil
+    pendingTaskId = nil
     latestContextTokens = nil
     latestContextWindowTokens = nil
+    latestDraftAcceptance = nil
     latestContextMayUpdate = false
   }
 
@@ -112,7 +124,18 @@ final class GenerationStats {
   /// recorded, so the caller can refresh context data from the server.
   @discardableResult
   func consumeTimingLine(_ line: String) -> Bool {
-    if let slotId = Self.parseTimingSlotID(line) { pendingSlotId = slotId }
+    let identity = Self.parseTimingIdentity(line)
+    if let draft = Self.parseDraftAcceptance(line) {
+      if let identity, latest?.slotId == identity.slotId,
+        latest?.taskId == identity.taskId {
+        latestDraftAcceptance = draft
+      }
+      return false
+    }
+    if let identity {
+      pendingSlotId = identity.slotId
+      pendingTaskId = identity.taskId
+    }
     guard let phase = Self.parsePhase(line) else { return false }
 
     if line.localizedCaseInsensitiveContains("prompt eval time") {
@@ -127,10 +150,12 @@ final class GenerationStats {
         generation: phase,
         completedAt: Date(),
         model: pendingModel,
-        slotId: pendingSlotId)
+        slotId: pendingSlotId,
+        taskId: pendingTaskId)
       latest = snapshot
       latestContextTokens = nil
       latestContextWindowTokens = nil
+      latestDraftAcceptance = nil
       latestContextMayUpdate = true
       if let model = snapshot.model { noteModelSelection(model) }
       history.append(snapshot)
@@ -138,6 +163,7 @@ final class GenerationStats {
       pendingPrompt = nil
       pendingModel = nil
       pendingSlotId = nil
+      pendingTaskId = nil
       return true
     }
     return false
@@ -150,13 +176,31 @@ final class GenerationStats {
       maximum: values.max() ?? 0)
   }
 
-  private static func parseTimingSlotID(_ line: String) -> Int? {
+  private static func parseTimingIdentity(_ line: String) -> (slotId: Int, taskId: Int)? {
     guard line.contains("print_timing"),
-      let regex = try? NSRegularExpression(pattern: #"\bid\s+(\d+)"#),
+      let regex = try? NSRegularExpression(
+        pattern: #"print_timing\w*:\s*id\s+(\d+)\s*\|\s*task\s+(\d+)"#),
       let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-      let range = Range(match.range(at: 1), in: line)
+      let slotRange = Range(match.range(at: 1), in: line),
+      let taskRange = Range(match.range(at: 2), in: line),
+      let slotId = Int(line[slotRange]),
+      let taskId = Int(line[taskRange])
     else { return nil }
-    return Int(line[range])
+    return (slotId, taskId)
+  }
+
+  private static func parseDraftAcceptance(_ line: String) -> DraftAcceptance? {
+    guard line.contains("draft acceptance"),
+      let regex = try? NSRegularExpression(
+        pattern: #"draft acceptance\s*=\s*[0-9]+(?:\.[0-9]+)?\s*\(\s*(\d+)\s+accepted\s*/\s*(\d+)\s+generated\s*\)"#),
+      let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+      let acceptedRange = Range(match.range(at: 1), in: line),
+      let generatedRange = Range(match.range(at: 2), in: line),
+      let accepted = Int(line[acceptedRange]),
+      let generated = Int(line[generatedRange]),
+      generated > 0, accepted <= generated
+    else { return nil }
+    return DraftAcceptance(accepted: accepted, generated: generated)
   }
 
   private static func parsePhase(_ line: String) -> Phase? {
