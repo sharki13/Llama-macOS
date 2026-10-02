@@ -38,7 +38,7 @@ enum LlamaBinaries {
   /// The build the app installs and keeps its own binary at -- the pinned
   /// target, not whatever is newest. Bump per app release after smoke-testing
   /// `serve` + `fit-params`; the app's auto-updater then rolls it out.
-  static let targetVersion = LlamaVersion(parsing: "b10679")!
+  static let targetVersion = LlamaVersion(parsing: "b11200")!
 
   /// The minimum build the app accepts from an unmanaged install (e.g. Homebrew)
   /// before nudging the user to update -- the app can't update those itself.
@@ -48,6 +48,18 @@ enum LlamaBinaries {
   /// them would break server start whenever agent mode is on. Only raise this
   /// if the app starts relying on an even newer flag.
   static let floorVersion = LlamaVersion(parsing: "b9726")!
+
+  /// The first build whose `serve --host` takes a comma-separated list of
+  /// addresses (llama.cpp PR #28690), which is what lets a server bound to a
+  /// specific address (e.g. Tailscale) keep answering on loopback too.
+  ///
+  /// It's above `floorVersion`, so it's a capability, not a requirement: the
+  /// app checks the in-use engine against it and passes a list only when it's
+  /// new enough, rather than raising the floor and nagging every Homebrew user
+  /// below it. The check has to be exact -- an older engine reads the list as
+  /// one hostname and binds nothing, so the server fails to start. Delete the
+  /// check (and this) once `floorVersion` reaches it.
+  static let multiHostVersion = LlamaVersion(parsing: "b11104")!
 
   /// Where the in-use binary comes from. Only `managed` is the app's to
   /// update; `brew` and `external` are both used as-is and never modified.
@@ -184,9 +196,12 @@ enum LlamaBinaries {
     proc.executableURL = URL(fileURLWithPath: path)
     proc.arguments = URL(fileURLWithPath: path).lastPathComponent == "llama-server"
       ? ["--version"] : ["version"]
+    // Capture both streams into one pipe: which stream carries the version has
+    // changed across builds (e.g. b10679 prints it to stderr, b11200 to
+    // stdout), and the parser finds the build number either way.
     let out = Pipe()
     proc.standardOutput = out
-    proc.standardError = out  // capture startup chatter too; version may follow it
+    proc.standardError = out
     let finished = DispatchSemaphore(value: 0)
     proc.terminationHandler = { _ in finished.signal() }
 

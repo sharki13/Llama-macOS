@@ -208,8 +208,8 @@ enum SettingsTab: CaseIterable, Identifiable {
   case tokens
   case integrations
   case downloads
-  case webUI
-  case command
+  case chat
+  case advanced
   case backend
   case stats
 
@@ -222,8 +222,8 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .tokens: "Tokens"
     case .integrations: "Integrations"
     case .downloads: "Downloads"
-    case .webUI: "Web UI"
-    case .command: "Command"
+    case .chat: "Chat"
+    case .advanced: "Advanced"
     case .stats: "Logs"
     case .backend: "Backend"
     }
@@ -236,8 +236,8 @@ enum SettingsTab: CaseIterable, Identifiable {
     case .tokens: "key.horizontal"
     case .integrations: "puzzlepiece.extension"
     case .downloads: "arrow.down.circle"
-    case .webUI: "macwindow"
-    case .command: "terminal"
+    case .chat: "bubble"
+    case .advanced: "wrench.adjustable"
     case .stats: "chart.bar.xaxis"
     case .backend: "cpu"
     }
@@ -354,14 +354,17 @@ struct SettingsSidebar: View {
   }
 }
 
-/// The Command tab -- the `llama serve` invocation the GUI produces.
+/// The Advanced tab -- the `llama serve` invocation the GUI produces, and the
+/// log of the server it starts.
 ///
-/// It lives in its own tab rather than under Network, Downloads or Web UI because
+/// It lives in its own tab rather than under Network, Downloads or Chat because
 /// it reflects settings from all of them: port and network access, the idle
 /// timeout, the model directory, agent mode. Any subject label would imply a
-/// scope the command doesn't have. Named for what it holds rather than for who it's
-/// for: "Advanced" describes a disposition, and nothing else here is filed
-/// that way.
+/// scope the command doesn't have. Named "Advanced" rather than "Command"
+/// because less technical users read "Command" as something they're meant to
+/// run; "Advanced" is the macOS convention for "safe to skip", so the tab
+/// answers that before it's even opened. It's meant to hold only server
+/// internals like these, not whatever doesn't fit elsewhere.
 struct ServerCommandView: View {
   @State private var metalNoResidency = UserSettings.metalNoResidency
 
@@ -384,9 +387,17 @@ struct ServerCommandView: View {
       }
 
       Section {
-        Text("The command the app runs to start the server.")
-          .font(.system(size: 11))
-          .foregroundStyle(.secondary)
+        // Titled like the rows below rather than with a lone caption: a
+        // caption in secondary text loses to the colored command under it, and
+        // the command then reads as instructions. A title makes it a labeled
+        // exhibit, with the "you don't run this" right under it, where the eye
+        // lands.
+        SettingRow(
+          title: "Server command",
+          description: "See exactly how the app starts the server for you."
+        ) {
+          EmptyView()
+        }
 
         // The command itself: monospaced, wrapping, and selectable so a user
         // can read or grab any part of it. Lightly syntax-highlighted to make
@@ -777,6 +788,7 @@ struct SettingsView: View {
   @State private var agentMode = UserSettings.agentMode
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
   @State private var globalShortcut = UserSettings.globalInputShortcut
+  @State private var customWebUIDir = UserSettings.customWebUIDirectory
   @State private var hfToken = UserSettings.hfToken ?? ""
   @State private var showingHFTokenSheet = false
   // Effective server port; re-read after the edit sheet saves so the row updates.
@@ -795,8 +807,8 @@ struct SettingsView: View {
     case .tokens: TokensSettingsView()
     case .integrations: IntegrationsSettingsView()
     case .downloads: downloadsForm
-    case .webUI: webUIForm
-    case .command: ServerCommandView()
+    case .chat: chatForm
+    case .advanced: ServerCommandView()
     case .stats: GenerationStatsView()
     case .backend: BackendInfoView()
     }
@@ -1044,9 +1056,9 @@ struct SettingsView: View {
     .formStyle(.grouped)
   }
 
-  /// The Web UI tab -- settings that shape the chat interface the server
+  /// The Chat tab -- settings that shape the chat interface the server
   /// serves: what models are allowed to do in it, and how to summon it.
-  private var webUIForm: some View {
+  private var chatForm: some View {
     Form {
       // Agent mode section
       Section {
@@ -1113,8 +1125,139 @@ struct SettingsView: View {
           .font(.callout)
         }
       }
+
+      // Custom web UI section. Last in the tab: it's for people building their
+      // own chat, a smaller group than either setting above.
+      Section {
+        // Row, caution and hint share one Form row, like agent mode above, so
+        // the grouped style doesn't rule separators between them.
+        VStack(alignment: .leading, spacing: 6) {
+        SettingRow(
+          title: "Custom web UI",
+          description: "Serves your own folder in place of the built-in chat."
+        ) {
+          HStack(spacing: 6) {
+            // Resetting means going back to the built-in UI.
+            if customWebUIDir != nil {
+              RestoreDefaultButton {
+                UserSettings.customWebUIDirectory = nil
+                customWebUIDir = nil
+              }
+            }
+
+            // "Choose…" until a folder is set, then the folder itself -- the
+            // same button as the model directory, so it reads as a location.
+            Button {
+              chooseWebUIFolder()
+            } label: {
+              HStack(spacing: 6) {
+                if let customWebUIDir {
+                  // Shorter than the model directory's cap: this row shares
+                  // its width with the reset button, and the leaf folder (the
+                  // part that says which UI it is) must survive truncation.
+                  Text(abbreviatedPath(customWebUIDir, maxLen: 28))
+                    .lineLimit(1)
+                } else {
+                  Text("Choose…")
+                }
+
+                Image(systemName: "folder")
+              }
+            }
+            .controlSize(.small)
+          }
+          .font(.callout)
+        }
+
+          if let caution = customWebUICaution {
+            SettingCaution(text: caution)
+          }
+
+          // Only once a folder is set: that's when a browser that has opened
+          // the built-in chat can keep showing it. The built-in UI installs a
+          // service worker that answers page loads from its cache, and the
+          // server can't retire it -- the worker's own update check now gets a
+          // 404, which browsers treat as "keep the old one". Clearing the
+          // site's data is the fix, and without this line the setting just
+          // looks broken.
+          if customWebUIDir != nil {
+            Text("A browser that has opened the built-in chat may keep showing it until you clear its data for this site.")
+              .font(.system(size: 11))
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+      }
     }
     .formStyle(.grouped)
+  }
+
+  /// The caution for the custom web UI row, or nil when the server is
+  /// reachable only from this Mac.
+  ///
+  /// The server hands out every file in the folder, dotfiles included, so
+  /// network access widens who can read it. Shown whether or not a folder is
+  /// set, for the same reason as `agentModeCaution`: it's there to inform the
+  /// choice, so it has to be readable before it's made.
+  private var customWebUICaution: String? {
+    guard let who = networkAudience else { return nil }
+    return "Network access is on, so \(who) could read every file in the chosen folder."
+  }
+
+  /// Opens a folder picker and sets it as the custom web UI.
+  ///
+  /// Refuses a folder with no `index.html` at its top level: the server would
+  /// start fine and then answer the root with a 404, which reads as the app
+  /// being broken rather than as the wrong folder. The common way to get there
+  /// is picking a project folder instead of its build output, so the alert
+  /// says what's missing rather than just "invalid folder".
+  private func chooseWebUIFolder() {
+    let selection = ModalPresentation.run { () -> URL? in
+      let panel = NSOpenPanel()
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.canCreateDirectories = false
+      panel.allowsMultipleSelection = false
+      panel.message = "Choose a folder with an index.html to serve as the web UI"
+      panel.prompt = "Select"
+      panel.directoryURL = customWebUIDir
+
+      return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    guard let url = selection else { return }
+
+    // Checked before `index.html`, so a project root that also lacks one gets
+    // the more specific message.
+    if let marker = projectMarker(in: url) {
+      ModalPresentation.showAlert(
+        style: .warning, title: "This folder has a \(marker)",
+        body: "The server hands out every file in the folder, so \(marker) would be readable too. Choose the folder with just the built web UI -- usually build or dist.")
+      return
+    }
+
+    guard LlamaServer.hasIndexPage(url) else {
+      ModalPresentation.showAlert(
+        style: .warning, title: "No index.html in this folder",
+        body: "Choose the folder that holds your web UI's index.html -- for a project with a build step, that's usually its build output.")
+      return
+    }
+
+    UserSettings.customWebUIDirectory = url
+    customWebUIDir = UserSettings.customWebUIDirectory
+  }
+
+  /// The first entry in `dir` that marks it as a project folder rather than a
+  /// build output -- `.git`, or an `.env` file -- or nil if there's none.
+  ///
+  /// The server serves every file in the folder, dotfiles included, so a
+  /// project root would hand out its history and secrets. It's also an easy
+  /// pick to make by mistake: a plain Vite project keeps its `index.html` at
+  /// the root, so the `index.html` check alone would let it through. Only the
+  /// top level is checked -- that's where both live in a project root.
+  private func projectMarker(in dir: URL) -> String? {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+    return names.sorted().first { $0 == ".git" || $0 == ".env" || $0.hasPrefix(".env.") }
   }
 
   /// This Mac's Tailscale address, re-read on every render rather than
@@ -1227,6 +1370,13 @@ struct SettingsView: View {
               : "Agent mode is on, so clients with a token would get file access.")
               .padding(.top, 2)
           }
+
+          // Same idea for a custom web UI: every file in its folder is served,
+          // so exposing the server exposes the folder.
+          if option == .localNetwork, customWebUIDir != nil {
+            SettingCaution(text: "A custom web UI is set, so anyone who connects could read every file in its folder.")
+              .padding(.top, 2)
+          }
         }
 
         Spacer(minLength: 0)
@@ -1261,18 +1411,19 @@ struct SettingsView: View {
   /// attached, and naming the people is what makes it a warning rather than a
   /// status line.
   private var agentModeCaution: String? {
-    guard exposedBeyondThisMac else { return nil }
-
-    let who =
-      if case .custom = networkAccess {
-        "anything that can reach the server"
-      } else {
-        "anyone on your current network"
-      }
-
+    guard let who = networkAudience else { return nil }
     return UserSettings.allowUnauthenticatedAPI
       ? "Network access is on, so \(who) could do this too."
       : "Network access is on, so clients with a token could do this too."
+  }
+
+  /// Who besides this Mac's user can reach the server, phrased to follow
+  /// "so", or nil when it's only them. Shared by the cautions on settings
+  /// whose risk grows with network access.
+  private var networkAudience: String? {
+    guard exposedBeyondThisMac else { return nil }
+    if case .custom = networkAccess { return "anything that can reach the server" }
+    return "anyone on your current network"
   }
 
   /// The address `option` binds, or nil when there's nothing true to print

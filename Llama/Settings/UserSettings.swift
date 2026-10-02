@@ -56,6 +56,7 @@ enum UserSettings {
     static let globalInputShortcut = "globalInputShortcut"
     static let llamaBinaryPath = "llamaBinaryPath"
     static let customLlamaBinaryPaths = "customLlamaBinaryPaths"
+    static let customWebUIDirectory = "customWebUIDirectory"
   }
 
   private static let defaults = UserDefaults.standard
@@ -363,6 +364,34 @@ enum UserSettings {
     set {
       guard newValue != allowUnauthenticatedAPI else { return }
       defaults.set(newValue, forKey: Keys.allowUnauthenticatedAPI)
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+    }
+  }
+
+  // MARK: - Custom Web UI
+
+  /// A folder the server serves at `/` in place of the built-in web UI
+  /// (`--path`), or `nil` for the built-in one -- the default. Lets a web app
+  /// of your own ride on the server: same origin as the API, so it needs no
+  /// port or CORS setup, and it's up whenever the app is and reachable
+  /// wherever network access says the server is.
+  ///
+  /// Records the choice even if the folder later goes away; the server then
+  /// falls back to the built-in UI on its own (see
+  /// `LlamaServer.effectiveWebUIDirectory`). The setter posts the settings
+  /// change notification, which restarts the server with/without `--path`.
+  static var customWebUIDirectory: URL? {
+    get {
+      defaults.string(forKey: Keys.customWebUIDirectory)
+        .map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+    set {
+      guard newValue?.path != customWebUIDirectory?.path else { return }
+      if let newValue {
+        defaults.set(newValue.path, forKey: Keys.customWebUIDirectory)
+      } else {
+        defaults.removeObject(forKey: Keys.customWebUIDirectory)
+      }
       NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
     }
   }
